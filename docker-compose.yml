@@ -89,8 +89,8 @@ services:
 
   scan-orchestrator:
     build:
-      context: ./backend
-      dockerfile: scan-orchestrator/Dockerfile
+      context: .
+      dockerfile: backend/scan-orchestrator/Dockerfile
     container_name: ad_orchestrator
     ports:
       - "8081:8081"
@@ -101,10 +101,6 @@ services:
       INVENTORY_SERVICE_URL: http://inventory-service:8082
       ANALYSIS_ENGINE_URL: http://analysis-engine:8083
       AGENT_BINARY_PATH: /app/yama-agent.exe
-    volumes:
-      # Mount the compiled Windows agent binary so the installer can push it to targets.
-      # Run 'make build-agent' to generate yama-agent.exe before starting the stack.
-      - ./yama-agent.exe:/app/yama-agent.exe:ro
     depends_on:
       postgres:
         condition: service_healthy

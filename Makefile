@@ -27,10 +27,10 @@ build-go:
 		cd backend/$$svc && go build ./... && cd ../..; \
 	done
 
-# Build collector agent (Windows binary) — also placed at repo root for Docker mount
+# Build collector agent (Windows binary) — baked into scan-orchestrator Docker image at build time
 build-agent:
 	cd collector/agent && GOOS=windows GOARCH=amd64 go build -o ../../yama-agent.exe .
-	@echo "Built yama-agent.exe — restart scan-orchestrator to pick it up"
+	@echo "Built yama-agent.exe — rebuild scan-orchestrator image to update: docker compose build scan-orchestrator"
 
 # Run DB migrations
 migrate:
