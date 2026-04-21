@@ -1,0 +1,149 @@
+version: "3.9"
+
+services:
+  # ─────────────────────── Infrastructure ───────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: ad_postgres
+    environment:
+      POSTGRES_USER: adassess
+      POSTGRES_PASSWORD: adassess_secret
+      POSTGRES_DB: adassessment
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/shared/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adassess"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ad_redis
+    command: redis-server --requirepass redis_secret --appendonly yes
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─────────────────────── Backend Services ─────────────────────
+  inventory-service:
+    build:
+      context: ./backend          # parent of all Go services
+      dockerfile: inventory-service/Dockerfile
+    container_name: ad_inventory
+    ports:
+      - "8082:8082"
+    environment:
+      PORT: 8082
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  analysis-engine:
+    build:
+      context: ./backend
+      dockerfile: analysis-engine/Dockerfile
+    container_name: ad_analysis
+    ports:
+      - "8083:8083"
+    environment:
+      PORT: 8083
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      INVENTORY_SERVICE_URL: http://inventory-service:8082
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+    restart: unless-stopped
+
+  report-service:
+    build:
+      context: ./backend
+      dockerfile: report-service/Dockerfile
+    container_name: ad_reports
+    ports:
+      - "8084:8084"
+    environment:
+      PORT: 8084
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      INVENTORY_SERVICE_URL: http://inventory-service:8082
+      ANALYSIS_ENGINE_URL: http://analysis-engine:8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scan-orchestrator:
+    build:
+      context: ./backend
+      dockerfile: scan-orchestrator/Dockerfile
+    container_name: ad_orchestrator
+    ports:
+      - "8081:8081"
+    environment:
+      PORT: 8081
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      INVENTORY_SERVICE_URL: http://inventory-service:8082
+      ANALYSIS_ENGINE_URL: http://analysis-engine:8083
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./backend
+      dockerfile: api-gateway/Dockerfile
+    container_name: ad_gateway
+    ports:
+      - "9080:8080"
+    environment:
+      PORT: 8080
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      SCAN_ORCHESTRATOR_URL: http://scan-orchestrator:8081
+      INVENTORY_SERVICE_URL: http://inventory-service:8082
+      ANALYSIS_ENGINE_URL: http://analysis-engine:8083
+      REPORT_SERVICE_URL: http://report-service:8084
+      JWT_SECRET: yama_jwt_secret_change_in_prod
+      ENV: development
+    depends_on:
+      redis:
+        condition: service_healthy
+      scan-orchestrator:
+        condition: service_started
+    restart: unless-stopped
+
+  # ─────────────────────── Frontend ─────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ad_frontend
+    ports:
+      - "80:3000"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:

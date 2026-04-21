@@ -1,0 +1,25 @@
+# Go
+*/vendor/
+*/bin/
+*.exe
+*.out
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Docker volumes & secrets
+*.env
+.env*
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# Chrome debug
+/tmp/

@@ -1,0 +1,10 @@
+go 1.22
+
+use (
+	./analysis-engine
+	./api-gateway
+	./inventory-service
+	./report-service
+	./scan-orchestrator
+	./shared
+)
