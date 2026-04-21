@@ -11,5 +11,7 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /app/service ./scan-orchestrator
+# yama-agent.exe is mounted at runtime via docker-compose volume (see build-agent)
 EXPOSE 8081
+ENV AGENT_BINARY_PATH=/app/yama-agent.exe
 CMD ["./scan-orchestrator"]

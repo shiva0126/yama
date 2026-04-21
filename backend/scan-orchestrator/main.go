@@ -63,8 +63,15 @@ func main() {
 	r.DELETE("/agents/:id", orch.DeleteAgent)
 	r.GET("/agents/:id/status", orch.GetAgentStatus)
 
+	// Agent remote installation via SSH
+	r.POST("/agents/install", orch.InstallAgent)
+	r.GET("/agents/install", orch.ListInstallJobs)
+	r.GET("/agents/install/:jobId", orch.GetInstallStatus)
+
 	// Internal: called by collector agent to report task results
 	r.POST("/internal/task-result", orch.HandleTaskResult)
+	// Serves compiled Windows agent binary for download
+	r.GET("/internal/agent-binary", orch.ServeAgentBinary)
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
 	go func() {

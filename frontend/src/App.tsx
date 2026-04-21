@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Layout } from './components/layout/Layout'
 import { Dashboard } from './components/Dashboard'
 import { Scanner } from './components/Scanner'
+import { Agents } from './components/Agents'
 import { Inventory } from './components/Inventory'
 import { Findings } from './components/Findings'
 import { Topology } from './components/Topology'
@@ -47,6 +48,7 @@ function AppRoutes() {
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="scanner" element={<Scanner />} />
+        <Route path="agents" element={<Agents />} />
         <Route path="inventory" element={<Inventory />} />
         <Route path="findings" element={<Findings />} />
         <Route path="topology" element={<Topology />} />

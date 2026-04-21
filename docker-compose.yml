@@ -100,6 +100,11 @@ services:
       REDIS_URL: redis://:redis_secret@redis:6379/0
       INVENTORY_SERVICE_URL: http://inventory-service:8082
       ANALYSIS_ENGINE_URL: http://analysis-engine:8083
+      AGENT_BINARY_PATH: /app/yama-agent.exe
+    volumes:
+      # Mount the compiled Windows agent binary so the installer can push it to targets.
+      # Run 'make build-agent' to generate yama-agent.exe before starting the stack.
+      - ./yama-agent.exe:/app/yama-agent.exe:ro
     depends_on:
       postgres:
         condition: service_healthy

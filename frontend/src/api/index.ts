@@ -1,7 +1,8 @@
 import axios from 'axios'
 import type {
   ScanJob, ScanRequest, CollectorAgent, Finding, ScoreCard,
-  ADUser, ADGroup, ADComputer, ADGPO, ADDomainController, SecurityIndicator
+  ADUser, ADGroup, ADComputer, ADGPO, ADDomainController, SecurityIndicator,
+  InstallRequest, InstallJob,
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
@@ -50,6 +51,10 @@ export const agentsApi = {
     api.post<{ id: string; api_key: string }>('/agents', data),
   delete: (id: string) => api.delete(`/agents/${id}`),
   status: (id: string) => api.get<{ status: string; last_seen: string }>(`/agents/${id}/status`),
+  install: (data: InstallRequest) =>
+    api.post<{ job_id: string; message: string }>('/agents/install', data),
+  listInstallJobs: () => api.get<{ jobs: InstallJob[] }>('/agents/install'),
+  getInstallStatus: (jobId: string) => api.get<InstallJob>(`/agents/install/${jobId}`),
 }
 
 // ============================================================

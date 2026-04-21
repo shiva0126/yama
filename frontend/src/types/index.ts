@@ -199,6 +199,34 @@ export interface SecurityIndicator {
 }
 
 // ============================================================
+// Agent Installation
+// ============================================================
+
+export type InstallStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface InstallRequest {
+  target_ip: string
+  username: string
+  password: string
+  domain: string
+  agent_name: string
+  ssh_port?: number
+  agent_port?: number
+}
+
+export interface InstallJob {
+  id: string
+  target_ip: string
+  agent_name: string
+  status: InstallStatus
+  progress: number
+  message: string
+  agent_id?: string
+  error?: string
+  created_at: string
+}
+
+// ============================================================
 // WebSocket
 // ============================================================
 

@@ -136,6 +136,56 @@ Each service reads its config from environment variables. Defaults are set in `d
 
 ---
 
+## Installing an Agent from the Frontend
+
+Yama can deploy and register the collector agent on a remote Windows machine directly from the web UI — no manual file copying required.
+
+### How it works
+
+1. Navigate to **Agents** in the sidebar.
+2. Click **Install Agent**.
+3. Fill in the form:
+
+| Field | Description |
+|---|---|
+| Target IP / Hostname | IP or DNS name of the Windows machine |
+| Agent Name | Friendly label shown in Yama |
+| Windows Username | Local or domain admin (e.g. `Administrator`) |
+| Password | Account password |
+| AD Domain | Domain the machine is joined to |
+| SSH Port | OpenSSH port (default 22) |
+| Agent Port | Port the agent will listen on (default 9090) |
+
+4. Click **Install Agent** and watch the real-time progress steps.
+5. On success the agent is automatically registered and ready to use in the Scanner.
+
+### What happens under the hood
+
+1. The backend connects to the target machine via **SSH** (OpenSSH must be enabled).
+2. The `yama-agent.exe` binary is uploaded (base64-piped over the SSH session).
+3. A **Windows Service** named `YamaAgent` is created and started via PowerShell.
+4. The orchestrator polls `http://<target>:9090/health` until the agent responds.
+5. The agent is auto-registered in Yama's database.
+
+### Prerequisites for remote install
+
+- **OpenSSH server** must be installed and running on the target Windows machine:
+  ```powershell
+  Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+  Start-Service sshd
+  Set-Service -Name sshd -StartupType Automatic
+  ```
+- The agent binary must be built first:
+  ```bash
+  make build-agent
+  ```
+- TCP port `9090` (or your chosen Agent Port) must be open in Windows Firewall:
+  ```powershell
+  New-NetFirewallRule -DisplayName "Yama Agent" -Direction Inbound -Protocol TCP -LocalPort 9090 -Action Allow
+  ```
+
+---
+
 ## Collector Agent (Windows)
 
 The collector agent runs on a **Windows machine that is joined to the target domain**. It exposes a local HTTP API that the Scan Orchestrator calls to execute PowerShell collection modules.

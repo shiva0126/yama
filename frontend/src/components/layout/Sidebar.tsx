@@ -1,13 +1,14 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Search, Server, ShieldAlert,
-  Network, FileText, LogOut
+  Network, FileText, LogOut, Cpu,
 } from 'lucide-react'
 import clsx from 'clsx'
 
 const nav = [
   { to: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
   { to: '/scanner',    label: 'Scanner',    icon: Search },
+  { to: '/agents',     label: 'Agents',     icon: Cpu },
   { to: '/inventory',  label: 'Inventory',  icon: Server },
   { to: '/findings',   label: 'Findings',   icon: ShieldAlert },
   { to: '/topology',   label: 'Topology',   icon: Network },

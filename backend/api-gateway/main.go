@@ -90,6 +90,9 @@ func main() {
 				agents.GET("/:id", agentHandler.GetAgent)
 				agents.DELETE("/:id", agentHandler.DeleteAgent)
 				agents.GET("/:id/status", agentHandler.GetAgentStatus)
+				agents.POST("/install", agentHandler.InstallAgent)
+				agents.GET("/install", agentHandler.ListInstallJobs)
+				agents.GET("/install/:jobId", agentHandler.GetInstallStatus)
 			}
 
 			// Scans

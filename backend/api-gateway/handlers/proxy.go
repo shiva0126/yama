@@ -173,11 +173,14 @@ type AgentHandler struct {
 func NewAgentHandler(serviceURL string, logger *zap.Logger) *AgentHandler {
 	return &AgentHandler{serviceURL: serviceURL, logger: logger}
 }
-func (h *AgentHandler) ListAgents(c *gin.Context)    { proxyGET(c, h.serviceURL, "/agents", h.logger) }
-func (h *AgentHandler) RegisterAgent(c *gin.Context) { proxyPOST(c, h.serviceURL, "/agents", h.logger) }
-func (h *AgentHandler) GetAgent(c *gin.Context)      { proxyGET(c, h.serviceURL, "/agents/"+c.Param("id"), h.logger) }
-func (h *AgentHandler) DeleteAgent(c *gin.Context)   { proxyDELETE(c, h.serviceURL, "/agents/"+c.Param("id"), h.logger) }
+func (h *AgentHandler) ListAgents(c *gin.Context)     { proxyGET(c, h.serviceURL, "/agents", h.logger) }
+func (h *AgentHandler) RegisterAgent(c *gin.Context)  { proxyPOST(c, h.serviceURL, "/agents", h.logger) }
+func (h *AgentHandler) GetAgent(c *gin.Context)       { proxyGET(c, h.serviceURL, "/agents/"+c.Param("id"), h.logger) }
+func (h *AgentHandler) DeleteAgent(c *gin.Context)    { proxyDELETE(c, h.serviceURL, "/agents/"+c.Param("id"), h.logger) }
 func (h *AgentHandler) GetAgentStatus(c *gin.Context) { proxyGET(c, h.serviceURL, "/agents/"+c.Param("id")+"/status", h.logger) }
+func (h *AgentHandler) InstallAgent(c *gin.Context)      { proxyPOST(c, h.serviceURL, "/agents/install", h.logger) }
+func (h *AgentHandler) ListInstallJobs(c *gin.Context)   { proxyGET(c, h.serviceURL, "/agents/install", h.logger) }
+func (h *AgentHandler) GetInstallStatus(c *gin.Context)  { proxyGET(c, h.serviceURL, "/agents/install/"+c.Param("jobId"), h.logger) }
 
 // InventoryHandler proxies to inventory-service
 type InventoryHandler struct {
