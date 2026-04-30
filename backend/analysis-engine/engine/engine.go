@@ -67,7 +67,7 @@ func (e *Engine) runAnalysis(scanID, snapshotID string) error {
 
 	var allFindings []types.Finding
 
-	// Run all indicator categories
+	// Core indicator categories
 	allFindings = append(allFindings, indicators.CheckKerberos(snapshot, scanID)...)
 	allFindings = append(allFindings, indicators.CheckAccounts(snapshot, scanID)...)
 	allFindings = append(allFindings, indicators.CheckPrivilegedAccess(snapshot, scanID)...)
@@ -76,6 +76,9 @@ func (e *Engine) runAnalysis(scanID, snapshotID string) error {
 	allFindings = append(allFindings, indicators.CheckADStructure(snapshot, scanID)...)
 	allFindings = append(allFindings, indicators.CheckDelegation(snapshot, scanID)...)
 	allFindings = append(allFindings, indicators.CheckTrusts(snapshot, scanID)...)
+	// New: ADCS / PKI and advanced checks
+	allFindings = append(allFindings, indicators.CheckPKI(snapshot, scanID)...)
+	allFindings = append(allFindings, indicators.CheckAdvanced(snapshot, scanID)...)
 
 	// Persist findings
 	for _, f := range allFindings {
@@ -86,7 +89,7 @@ func (e *Engine) runAnalysis(scanID, snapshotID string) error {
 		affectedJSON, _ := json.Marshal(f.AffectedObjects)
 		_, err := e.db.Exec(ctx,
 			`INSERT INTO findings (id, scan_id, indicator_id, name, description, severity, category,
-			  risk_score, affected_objects, remediation, references, mitre, is_new, detected_at)
+			  risk_score, affected_objects, remediation, "references", mitre, is_new, detected_at)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 			f.ID, f.ScanID, f.IndicatorID, f.Name, f.Description,
 			string(f.Severity), string(f.Category), f.RiskScore,
@@ -140,7 +143,6 @@ func (e *Engine) fetchSnapshot(snapshotID string) (*types.InventorySnapshot, err
 
 func computeScoreCard(findings []types.Finding) types.ScoreCard {
 	card := types.ScoreCard{
-		OverallScore: 100,
 		CategoryScores: make(map[string]int),
 	}
 
@@ -158,12 +160,31 @@ func computeScoreCard(findings []types.Finding) types.ScoreCard {
 			card.InfoCount++
 		}
 		card.TotalFindings++
-		// Deduct from score based on severity
-		card.OverallScore -= f.Severity.Score()
+		cat := string(f.Category)
+		card.CategoryScores[cat] += f.Severity.Score()
 	}
 
+	// Weighted penalty formula — prevents single category from collapsing the score.
+	// Each severity tier contributes a capped penalty so the score stays meaningful
+	// even in very unhealthy environments.
+	critPenalty := min(40, card.CriticalCount*20)
+	highPenalty := min(30, card.HighCount*8)
+	medPenalty := min(20, card.MediumCount*4)
+	lowPenalty := min(10, card.LowCount*1)
+	totalPenalty := critPenalty + highPenalty + medPenalty + lowPenalty
+
+	card.OverallScore = 100 - totalPenalty
 	if card.OverallScore < 0 {
 		card.OverallScore = 0
+	}
+
+	// Invert category scores to 0-100 scale (100 = no issues)
+	for cat, rawPenalty := range card.CategoryScores {
+		capped := rawPenalty * 3
+		if capped > 100 {
+			capped = 100
+		}
+		card.CategoryScores[cat] = 100 - capped
 	}
 	return card
 }
@@ -216,7 +237,7 @@ func (e *Engine) GetFinding(c *gin.Context) {
 
 	err := e.db.QueryRow(context.Background(),
 		`SELECT id, scan_id, indicator_id, name, description, severity, category, risk_score,
-		  affected_objects, remediation, references, mitre, detected_at
+		  affected_objects, remediation, "references", mitre, detected_at
 		 FROM findings WHERE id=$1`, id,
 	).Scan(&f.ID, &f.ScanID, &f.IndicatorID, &f.Name, &f.Description,
 		&f.Severity, &f.Category, &f.RiskScore,

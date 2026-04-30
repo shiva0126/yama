@@ -7,16 +7,19 @@ import clsx from 'clsx'
 import type { ScanJob } from '../../types'
 
 const TASK_TYPES = [
-  { id: 'topology',  label: 'Forest Topology',    desc: 'Domains, trusts, sites' },
-  { id: 'users',     label: 'Users',               desc: 'All user accounts' },
-  { id: 'groups',    label: 'Groups',              desc: 'Security groups & nesting' },
-  { id: 'computers', label: 'Computers',           desc: 'Workstations & servers' },
-  { id: 'gpos',      label: 'Group Policy',        desc: 'GPO settings & links' },
-  { id: 'kerberos',  label: 'Kerberos Config',     desc: 'krbtgt, encryption types' },
-  { id: 'acls',      label: 'ACL Analysis',        desc: 'Dangerous permissions' },
-  { id: 'dcinfo',    label: 'Domain Controllers',  desc: 'DC health & services' },
-  { id: 'trusts',    label: 'Trust Relationships', desc: 'Forest & domain trusts' },
-  { id: 'ous',       label: 'OUs',                 desc: 'Organizational units' },
+  { id: 'topology',  label: 'Forest Topology',       desc: 'Domains, trusts, sites', group: 'Core' },
+  { id: 'users',     label: 'Users',                 desc: 'All user accounts', group: 'Core' },
+  { id: 'groups',    label: 'Groups',                desc: 'Security groups & nesting', group: 'Core' },
+  { id: 'computers', label: 'Computers',             desc: 'Workstations & servers', group: 'Core' },
+  { id: 'gpos',      label: 'Group Policy',          desc: 'GPO settings & links', group: 'Core' },
+  { id: 'dcinfo',    label: 'Domain Controllers',    desc: 'DC health & services', group: 'Core' },
+  { id: 'kerberos',  label: 'Kerberos Config',       desc: 'krbtgt, encryption types', group: 'Security' },
+  { id: 'acls',      label: 'ACL Analysis',          desc: 'Dangerous permissions', group: 'Security' },
+  { id: 'trusts',    label: 'Trust Relationships',   desc: 'Forest & domain trusts', group: 'Security' },
+  { id: 'adcs',      label: 'ADCS / PKI',            desc: 'Certificate templates, ESC vulns', group: 'Security' },
+  { id: 'sites',     label: 'Sites & Services',      desc: 'AD sites, subnets, MAQ, RecycleBin', group: 'Security' },
+  { id: 'fgpp',      label: 'Fine-Grained Passwords',desc: 'Password Settings Objects', group: 'Security' },
+  { id: 'ous',       label: 'OUs',                   desc: 'Organizational units', group: 'Core' },
 ]
 
 export function Scanner() {
@@ -129,28 +132,35 @@ export function Scanner() {
               </label>
             </div>
             {!allTasks && (
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                {TASK_TYPES.map(task => (
-                  <label
-                    key={task.id}
-                    className={clsx(
-                      'flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-colors text-xs',
-                      selectedTasks.includes(task.id)
-                        ? 'border-violet-500/50 bg-violet-500/10'
-                        : 'border-gray-700 hover:border-gray-600'
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedTasks.includes(task.id)}
-                      onChange={() => toggleTask(task.id)}
-                      className="mt-0.5"
-                    />
-                    <div>
-                      <p className="text-white font-medium">{task.label}</p>
-                      <p className="text-gray-500">{task.desc}</p>
+              <div className="space-y-3 mt-2">
+                {(['Core', 'Security'] as const).map(group => (
+                  <div key={group}>
+                    <p className="text-xs text-gray-600 uppercase tracking-wider mb-1.5">{group}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {TASK_TYPES.filter(t => t.group === group).map(task => (
+                        <label
+                          key={task.id}
+                          className={clsx(
+                            'flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-colors text-xs',
+                            selectedTasks.includes(task.id)
+                              ? 'border-violet-500/50 bg-violet-500/10'
+                              : 'border-gray-700 hover:border-gray-600'
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedTasks.includes(task.id)}
+                            onChange={() => toggleTask(task.id)}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <p className="text-white font-medium">{task.label}</p>
+                            <p className="text-gray-500">{task.desc}</p>
+                          </div>
+                        </label>
+                      ))}
                     </div>
-                  </label>
+                  </div>
                 ))}
               </div>
             )}

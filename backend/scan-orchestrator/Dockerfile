@@ -6,7 +6,7 @@ ENV GOWORK=off
 COPY backend/shared/ ./shared/
 COPY backend/scan-orchestrator/ ./scan-orchestrator/
 WORKDIR /workspace/scan-orchestrator
-RUN go mod download
+RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/service .
 
 # Cross-compile the Windows collector agent binary

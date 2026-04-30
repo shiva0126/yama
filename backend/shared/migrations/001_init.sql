@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS agents (
     hostname    VARCHAR(255) NOT NULL,
     domain      VARCHAR(255) NOT NULL,
     ip_address  VARCHAR(45),
+    port        INTEGER NOT NULL DEFAULT 389,
+    dc_username VARCHAR(255) DEFAULT '',
+    dc_password TEXT DEFAULT '',
     api_key     VARCHAR(64) UNIQUE NOT NULL,
     status      VARCHAR(20) DEFAULT 'offline',
     last_seen   TIMESTAMP WITH TIME ZONE,
@@ -201,3 +204,13 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 
 CREATE INDEX idx_reports_scan_id ON reports(scan_id);
+
+-- ============================================================
+-- Snapshot Metadata (ADCS, Sites, domain config — flexible JSONB KV)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS snapshot_metadata (
+    snapshot_id  UUID REFERENCES inventory_snapshots(id) ON DELETE CASCADE,
+    key          VARCHAR(50) NOT NULL,
+    value        JSONB,
+    PRIMARY KEY (snapshot_id, key)
+);

@@ -13,6 +13,9 @@ export type FindingCategory =
   | 'AD Structure'
   | 'Delegation'
   | 'Trusts'
+  | 'PKI / Certificate Services'
+  | 'NTLM & Authentication'
+  | 'Persistence Mechanisms'
 
 // ============================================================
 // Scans

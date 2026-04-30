@@ -38,6 +38,9 @@ func main() {
 	}
 	rdb := redis.NewClient(opt)
 
+	// Auto-migrate: add credential columns if upgrading from older schema
+	autoMigrate(pool, logger)
+
 	// Orchestrator
 	orch := orchestrator.New(pool, rdb, cfg, logger)
 
@@ -88,4 +91,18 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+}
+
+func autoMigrate(pool *pgxpool.Pool, logger *zap.Logger) {
+	migrations := []string{
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS port INTEGER NOT NULL DEFAULT 389`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS dc_username VARCHAR(255) DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN IF NOT EXISTS dc_password TEXT DEFAULT ''`,
+	}
+	for _, m := range migrations {
+		if _, err := pool.Exec(context.Background(), m); err != nil {
+			logger.Warn("auto-migration skipped", zap.String("sql", m), zap.Error(err))
+		}
+	}
+	logger.Info("schema migration complete")
 }

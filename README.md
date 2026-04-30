@@ -1,6 +1,9 @@
 # Yama — Active Directory Assessment Platform
 
-Yama is an enterprise-grade Active Directory security assessment platform. It automates the discovery of AD vulnerabilities, collects a full inventory of domain objects, scores your environment against 40+ security indicators, and generates actionable remediation reports — all through a real-time web dashboard.
+Yama is an enterprise-grade Active Directory security assessment platform. It automates discovery of AD vulnerabilities, collects a full inventory of domain objects, scores your environment against **46+ security indicators**, and generates actionable remediation reports — all through a real-time web dashboard.
+
+> **No Windows agent. No port changes. No domain admin required.**
+> Yama uses direct LDAP (port 389) with any read-only domain user account.
 
 ---
 
@@ -10,9 +13,9 @@ Yama is an enterprise-grade Active Directory security assessment platform. It au
 - [Prerequisites](#prerequisites)
 - [Quick Start (Docker)](#quick-start-docker)
 - [Development Setup](#development-setup)
-- [Collector Agent (Windows)](#collector-agent-windows)
 - [Running a Scan](#running-a-scan)
 - [Security Indicators](#security-indicators)
+- [Dashboard & UI](#dashboard--ui)
 - [Reports](#reports)
 - [Configuration Reference](#configuration-reference)
 - [Makefile Reference](#makefile-reference)
@@ -24,22 +27,21 @@ Yama is an enterprise-grade Active Directory security assessment platform. It au
 
 ```
 Browser
-  └── Frontend (React + TypeScript)  :80 / :3000
-        └── API Gateway              :8080  (JWT auth, WebSocket)
-              ├── Scan Orchestrator  :8081  (workflow, agent coordination)
-              ├── Inventory Service  :8082  (AD object snapshots)
-              ├── Analysis Engine    :8083  (40+ security checks)
-              └── Report Service     :8084  (HTML / PDF / JSON reports)
+  └── Frontend (React + TypeScript)  :80
+        └── API Gateway              :9080  (JWT auth, WebSocket hub)
+              ├── Scan Orchestrator  :8081  (LDAP collection engine, workflow)
+              ├── Inventory Service  :8082  (AD object snapshots, PostgreSQL)
+              ├── Analysis Engine    :8083  (46+ security indicator checks)
+              └── Report Service     :8084  (HTML / PDF / JSON generation)
 
-Windows domain-joined machine
-  └── Collector Agent  :9090  (PowerShell + C# execution)
+Target domain (read-only user sufficient)
+  └── LDAP  :389   ← only connection needed
 ```
 
-- **Backend**: Go 1.22 microservices with Gin
-- **Database**: PostgreSQL 16
-- **Cache / Pub-Sub**: Redis 7
-- **Frontend**: React 18, Vite, TailwindCSS
-- **Data collection**: PowerShell modules + extensible C# tooling
+**Stack:**
+- Go 1.22 microservices (Gin), PostgreSQL 16, Redis 7
+- React 18, Vite, TailwindCSS, Recharts, ReactFlow
+- Docker Compose — single `make up` deploys everything
 
 ---
 
@@ -50,237 +52,216 @@ Windows domain-joined machine
 | Docker & Docker Compose | 24+ |
 | Go (dev only) | 1.22+ |
 | Node.js (dev only) | 20+ |
-| Windows collector machine | PowerShell 5.0+, domain-joined |
+| Target AD | Any read-only domain user, LDAP port 389 reachable |
 
 ---
 
 ## Quick Start (Docker)
 
 ```bash
-# 1. Clone the repo
+# 1. Clone
 git clone https://github.com/shiva0126/yama.git
 cd yama
 
-# 2. Start the full stack (DB, Redis, all services, frontend)
+# 2. Start the full stack
 make up
 
 # 3. Open the dashboard
 #    http://localhost
+#    Default login: admin / admin
 ```
 
 The first run builds all images and runs database migrations automatically.
 
-To stop everything:
-
 ```bash
-make down
-```
-
-To view logs:
-
-```bash
-make logs                  # all services
-docker compose logs -f api-gateway   # specific service
+make down     # stop everything
+make logs     # tail logs for all services
 ```
 
 ---
 
 ## Development Setup
 
-### 1. Start infrastructure only
+### 1. Start infrastructure
 
 ```bash
-make dev-infra             # starts PostgreSQL and Redis in Docker
+make dev-infra        # starts PostgreSQL and Redis in Docker
+make migrate          # run DB migrations
 ```
 
-### 2. Run database migrations
+### 2. Start backend services (each in its own terminal)
 
 ```bash
-make migrate
-```
-
-### 3. Start backend services (each in its own terminal)
-
-```bash
-cd backend/api-gateway      && go run .
+cd backend/api-gateway       && go run .
 cd backend/scan-orchestrator && go run .
 cd backend/inventory-service && go run .
 cd backend/analysis-engine   && go run .
 cd backend/report-service    && go run .
 ```
 
-### 4. Start the frontend dev server
+### 3. Start frontend
 
 ```bash
-make dev-frontend
-# or
 cd frontend && npm install && npm run dev
+# http://localhost:3000
 ```
-
-Frontend is available at `http://localhost:3000`, API gateway at `http://localhost:8080`.
 
 ### Environment variables
 
-Each service reads its config from environment variables. Defaults are set in `docker-compose.yml`. For local development, copy and edit the relevant values:
+All defaults are set in `docker-compose.yml`. Key variables:
 
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | per-service | HTTP listen port |
 | `DB_DSN` | postgres://... | PostgreSQL connection string |
 | `REDIS_URL` | redis://localhost:6379 | Redis address |
-| `JWT_SECRET` | change-me | JWT signing key |
-| `ORCHESTRATOR_URL` | http://localhost:8081 | Internal service URL |
-| `INVENTORY_URL` | http://localhost:8082 | Internal service URL |
-| `ANALYSIS_URL` | http://localhost:8083 | Internal service URL |
-| `REPORT_URL` | http://localhost:8084 | Internal service URL |
-
----
-
-## Installing an Agent from the Frontend
-
-Yama can deploy and register the collector agent on a remote Windows machine directly from the web UI — no manual file copying required.
-
-### How it works
-
-1. Navigate to **Agents** in the sidebar.
-2. Click **Install Agent**.
-3. Fill in the form:
-
-| Field | Description |
-|---|---|
-| Target IP / Hostname | IP or DNS name of the Windows machine |
-| Agent Name | Friendly label shown in Yama |
-| Windows Username | Local or domain admin (e.g. `Administrator`) |
-| Password | Account password |
-| AD Domain | Domain the machine is joined to |
-| SSH Port | OpenSSH port (default 22) |
-| Agent Port | Port the agent will listen on (default 9090) |
-
-4. Click **Install Agent** and watch the real-time progress steps.
-5. On success the agent is automatically registered and ready to use in the Scanner.
-
-### What happens under the hood
-
-1. The backend connects to the target machine via **SSH** (OpenSSH must be enabled).
-2. The `yama-agent.exe` binary is uploaded (base64-piped over the SSH session).
-3. A **Windows Service** named `YamaAgent` is created and started via PowerShell.
-4. The orchestrator polls `http://<target>:9090/health` until the agent responds.
-5. The agent is auto-registered in Yama's database.
-
-### Prerequisites for remote install
-
-- **OpenSSH server** must be installed and running on the target Windows machine:
-  ```powershell
-  Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-  Start-Service sshd
-  Set-Service -Name sshd -StartupType Automatic
-  ```
-- The agent binary must be built first:
-  ```bash
-  make build-agent
-  ```
-- TCP port `9090` (or your chosen Agent Port) must be open in Windows Firewall:
-  ```powershell
-  New-NetFirewallRule -DisplayName "Yama Agent" -Direction Inbound -Protocol TCP -LocalPort 9090 -Action Allow
-  ```
-
----
-
-## Collector Agent (Windows)
-
-The collector agent runs on a **Windows machine that is joined to the target domain**. It exposes a local HTTP API that the Scan Orchestrator calls to execute PowerShell collection modules.
-
-### Build the agent
-
-```bash
-make build-agent
-# produces: collector/agent/yama-agent.exe (cross-compiled for Windows amd64)
-```
-
-### Deploy and register
-
-1. Copy `yama-agent.exe` and the `collector/powershell/modules/` folder to the target Windows machine.
-2. Start the agent (runs on port 9090 by default):
-
-```powershell
-.\yama-agent.exe
-```
-
-3. In the Yama dashboard go to **Settings → Agents → Register Agent** and provide:
-   - Agent hostname / IP
-   - Port (default 9090)
-   - Capabilities (topology, users, groups, computers, gpos, kerberos, acls, dc-info)
-
-The agent will appear as **online** in the dashboard once registered.
-
-### PowerShell modules included
-
-| Module | Collects |
-|---|---|
-| `Get-ADTopology` | Forest / domain structure |
-| `Get-ADUsers` | User accounts, password policies, flags |
-| `Get-ADGroups` | Groups and memberships |
-| `Get-ADComputers` | Computer accounts, OS versions |
-| `Get-ADGPOs` | Group Policy Objects |
-| `Get-KerberosConfig` | Kerberos delegation, SPNs |
-| `Get-ACLAnalysis` | Sensitive ACL permissions |
-| `Get-DCInfo` | Domain controller details |
+| `JWT_SECRET` | change-me | JWT signing key — **change in production** |
+| `ORCHESTRATOR_URL` | http://localhost:8081 | Internal service routing |
+| `INVENTORY_URL` | http://localhost:8082 | Internal service routing |
+| `ANALYSIS_URL` | http://localhost:8083 | Internal service routing |
+| `REPORT_URL` | http://localhost:8084 | Internal service routing |
 
 ---
 
 ## Running a Scan
 
-1. Open the dashboard at `http://localhost`.
-2. Navigate to **Scanner**.
-3. Select a registered online agent.
-4. Choose the collection modules to run (or select all).
+1. Open `http://localhost` and log in.
+2. Go to **Agents** → register a collector agent (provide LDAP target, domain, credentials).
+3. Navigate to **Scanner** → select the agent and target domain.
+4. Choose collection modules or select **All modules**.
 5. Click **Start Scan**.
 
-Scan progress streams in real time via WebSocket. When complete, findings appear in the **Findings** tab and a report can be generated from the **Reports** tab.
+Scan progress streams in real time via WebSocket. Results appear in **Findings**, **Inventory**, and **Topology** tabs immediately upon completion.
+
+### Collection Modules
+
+| Module | What it collects |
+|---|---|
+| **Forest Topology** | Domain structure, trusts |
+| **Users** | Accounts, password flags, SPNs, shadow credentials |
+| **Groups** | Security groups, membership, privilege level |
+| **Computers** | Computer accounts, OS, LAPS, delegation flags |
+| **Group Policy** | GPO links, SYSVOL permissions |
+| **Domain Controllers** | DC health, FSMO roles, SMB/LDAP signing |
+| **Kerberos Config** | krbtgt age, encryption types, delegation |
+| **ACL Analysis** | Dangerous permissions on sensitive objects |
+| **Trust Relationships** | Forest/domain trusts, SID filtering |
+| **ADCS / PKI** | Certificate templates, ESC vulnerability chains |
+| **Sites & Services** | AD sites, subnets, site links, MachineAccountQuota |
+| **Fine-Grained Passwords** | Password Settings Objects |
 
 ---
 
 ## Security Indicators
 
-The Analysis Engine evaluates 40+ built-in checks across these categories:
+The Analysis Engine evaluates **46+ built-in checks** across 11 categories using a self-registering indicator registry pattern. Each check implements a standard `Indicator` interface making new checks trivial to add.
 
-| Category | Example Checks |
+### Scoring
+
+```
+Score = 100 − (crit_penalty + high_penalty + med_penalty + low_penalty)
+
+crit_penalty = min(40, critical_count × 20)
+high_penalty = min(30, high_count    × 8)
+med_penalty  = min(20, medium_count  × 4)
+low_penalty  = min(10, low_count     × 1)
+```
+
+Penalties are tier-capped to prevent a single category of findings from collapsing the overall score.
+
+### Indicator Categories
+
+| Category | Key Checks |
 |---|---|
-| Kerberos | Kerberoastable accounts, unconstrained delegation, AS-REP roasting |
-| Account Security | Password never expires, stale accounts, default Administrator enabled |
-| Privileged Access | Nested admin groups, excessive Domain Admins, shadow admins |
-| Group Policy | GPO enforcement gaps, WMI filter issues |
-| Domain Controllers | SYSVOL replication, DC OS patch levels |
-| Trusts | External trusts with SID filtering disabled |
-| ACLs | GenericAll / WriteDACL on sensitive objects |
-| AD Structure | Empty OUs, schema anomalies |
+| **Kerberos** | AS-REP roasting, Kerberoastable SPNs, unconstrained delegation, krbtgt age |
+| **Account Security** | Password never expires, stale accounts, default Administrator, blank passwords |
+| **Privileged Access** | Excessive Domain Admins, nested admin groups, shadow admins, adminCount orphans |
+| **Group Policy** | Unlinked GPOs, SYSVOL writable by non-admin, WMI filter issues |
+| **Domain Controllers** | Print Spooler running, SMB signing disabled, LDAP signing not required |
+| **AD Structure** | Empty OUs, schema anomalies |
+| **Delegation** | Unconstrained delegation on non-DCs, constrained delegation misconfiguration |
+| **Trusts** | External trusts with SID filtering disabled |
+| **PKI / Certificate Services** | ESC1 (enrollee supplies SAN), ESC2 (Any Purpose), ESC3 (Cert Request Agent), ESC4 (weak template ACL), ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2), ESC7 (ManageCA low-priv) |
+| **NTLM & Authentication** | NTLMv1 permitted (LmCompatibilityLevel < 3), RC4 Kerberos encryption allowed, shadow credentials on privileged accounts |
+| **Persistence Mechanisms** | Machine Account Quota > 0, AD Recycle Bin disabled, inactive computer accounts |
 
 Each finding includes:
 - Severity: **Critical / High / Medium / Low / Info**
-- Affected objects
-- MITRE ATT&CK technique mapping
+- Affected AD objects (DN, type, detail)
+- MITRE ATT&CK technique tags (with direct links)
 - Step-by-step remediation guidance
 - Risk score contribution
+
+### Adding a Custom Indicator
+
+1. Create a file in `backend/analysis-engine/indicators/`
+2. Implement the `Indicator` interface:
+
+```go
+type Indicator interface {
+    Metadata() types.SecurityIndicator
+    Check(snapshot *types.InventorySnapshot, scanID string) []types.Finding
+}
+```
+
+3. Call `registry.Register(&MyIndicator{})` in the `init()` function — it is automatically included in every scan run.
+
+---
+
+## Dashboard & UI
+
+### Dashboard
+- **Security score gauge** with color-coded thresholds (≥80 green, ≥60 amber, <60 red)
+- **Score trend chart** — line graph across last 10 scans with delta vs previous
+- **Category health grid** — per-category scores, click to filter findings
+- **Top priority findings** — critical + high findings sorted by risk score
+- **Running scan indicator** with live progress
+
+### Findings
+- Full-text search across name, description, indicator ID, affected object names
+- **Severity filter chips** (Critical / High / Medium / Low / Info)
+- Sort by severity, risk score, name, or detection date
+- **Grouped by category** or flat list toggle
+- Expandable finding detail: affected objects, remediation steps, MITRE tags, references
+
+### Inventory
+All 5 AD object tables (Users, Groups, Computers, GPOs, Domain Controllers) feature:
+- **Sortable columns** (click header to sort asc/desc)
+- **Search** with real-time filtering
+- **Risk-based default sort** (highest risk objects surface first)
+- Relevant security flags as inline badges
+
+### Topology
+- **ReactFlow graph** — domain node → site nodes → DC nodes
+- Color coding: Global Catalog DCs (green), regular DCs (purple)
+- Site link edges with cost labels
+- Risk flags: MachineAccountQuota, AD Recycle Bin status, ADCS ESC count
+- Sites & Services table with DC-to-site mapping and subnet ranges
+
+### Reports
+- Generate HTML / PDF / JSON reports for any completed scan
+- **Report history table** with per-row re-download
+- Scan summary preview (score, findings, critical count) before generating
 
 ---
 
 ## Reports
 
-From the **Reports** page, select a completed scan and choose a format:
+From the **Reports** page:
 
 | Format | Use case |
 |---|---|
-| **HTML** | Browser-readable, shareable |
-| **PDF** | Executive / audit distribution |
-| **JSON** | Integration with SIEM / ticketing tools |
+| **HTML** | Browser-readable, shareable with stakeholders |
+| **PDF** | Executive summary / audit distribution |
+| **JSON** | SIEM / ticketing system integration |
 
-Reports include the overall security score, severity breakdown, all findings with remediation steps, and an inventory summary.
+Reports include the overall score, severity breakdown, full findings list with remediation, and an inventory summary.
 
 ---
 
 ## Configuration Reference
 
-Primary configuration is in `docker-compose.yml`. Key service ports:
+Service ports (host → container):
 
 | Service | Host Port | Container Port |
 |---|---|---|
@@ -300,11 +281,10 @@ Primary configuration is in `docker-compose.yml`. Key service ports:
 ```bash
 make up               # Build and start all Docker services
 make down             # Stop and remove containers
-make build            # Build all Docker images
+make build            # Rebuild all Docker images
 make migrate          # Run database migrations
 make dev-infra        # Start only PostgreSQL and Redis
-make dev-frontend     # Start React dev server
-make build-agent      # Cross-compile Windows collector agent
+make dev-frontend     # Start React dev server (hot reload)
 make logs             # Tail logs for all services
 ```
 
@@ -315,23 +295,32 @@ make logs             # Tail logs for all services
 ```
 yama/
 ├── backend/
-│   ├── api-gateway/          # Auth, routing, WebSocket hub
-│   ├── scan-orchestrator/    # Scan workflow and agent coordination
-│   ├── inventory-service/    # AD object storage and retrieval
-│   ├── analysis-engine/      # Security indicator execution
-│   ├── report-service/       # Report generation
-│   └── shared/               # Types, config, DB migrations
-├── collector/
-│   ├── agent/                # Windows collector agent (Go)
-│   ├── powershell/modules/   # PowerShell collection scripts
-│   └── csharp/ADCollector/   # C# tools (extensible)
-├── frontend/                 # React + TypeScript SPA
+│   ├── api-gateway/           # JWT auth, WebSocket hub, reverse proxy
+│   │   ├── handlers/          # Route handlers (proxy.go)
+│   │   ├── middleware/        # JWT middleware
+│   │   └── websocket/         # Real-time hub (Redis pub/sub → browser)
+│   ├── scan-orchestrator/     # LDAP collection engine, scan workflow
+│   │   └── ldapcollector/     # LDAP collectors (users, groups, adcs, sites, ...)
+│   ├── inventory-service/     # AD snapshot storage, topology endpoint
+│   ├── analysis-engine/       # Security checks
+│   │   └── indicators/        # Self-registering indicator registry
+│   ├── report-service/        # HTML / PDF / JSON generation
+│   └── shared/
+│       ├── types/             # Shared Go types (AD objects, findings, scan)
+│       ├── config/            # Env config loader
+│       └── migrations/        # PostgreSQL schema migrations
+├── frontend/
+│   └── src/
+│       ├── components/        # Dashboard, Findings, Inventory, Scanner, ...
+│       ├── api/               # Axios API client
+│       ├── stores/            # Zustand state (active scan)
+│       └── types/             # TypeScript type definitions
 ├── docker-compose.yml
 └── Makefile
 ```
 
 ---
 
-## License
+## Security Notice
 
-This project is intended for authorized security assessments only. Always obtain proper written authorization before running assessments against any Active Directory environment.
+Yama is designed for **authorized security assessments only**. Always obtain written authorization before running assessments against any Active Directory environment. The tool uses read-only LDAP queries and makes no changes to the target domain.

@@ -32,14 +32,17 @@ func (s Severity) Score() int {
 type FindingCategory string
 
 const (
-	CategoryKerberos        FindingCategory = "Kerberos"
-	CategoryAccounts        FindingCategory = "Account Security"
-	CategoryPrivileged      FindingCategory = "Privileged Access"
-	CategoryGroupPolicy     FindingCategory = "Group Policy"
+	CategoryKerberos          FindingCategory = "Kerberos"
+	CategoryAccounts          FindingCategory = "Account Security"
+	CategoryPrivileged        FindingCategory = "Privileged Access"
+	CategoryGroupPolicy       FindingCategory = "Group Policy"
 	CategoryDomainControllers FindingCategory = "Domain Controllers"
-	CategoryADStructure     FindingCategory = "AD Structure"
-	CategoryDelegation      FindingCategory = "Delegation"
-	CategoryTrusts          FindingCategory = "Trusts"
+	CategoryADStructure       FindingCategory = "AD Structure"
+	CategoryDelegation        FindingCategory = "Delegation"
+	CategoryTrusts            FindingCategory = "Trusts"
+	CategoryPKI               FindingCategory = "PKI / Certificate Services"
+	CategoryNTLM              FindingCategory = "NTLM & Authentication"
+	CategoryPersistence       FindingCategory = "Persistence Mechanisms"
 )
 
 type Finding struct {
@@ -256,4 +259,73 @@ var AllIndicators = []SecurityIndicator{
 		Description: "Local Administrator Password Solution (LAPS) is not deployed. Without LAPS, local admin passwords may be shared across machines enabling lateral movement.",
 		Remediation: "Deploy Microsoft LAPS or Windows LAPS to manage unique local admin passwords on all machines.",
 		MITRE:       []string{"T1078.003"}},
+
+	{ID: "S005", Name: "AD Recycle Bin not enabled", Category: CategoryADStructure, Severity: SeverityLow,
+		Description: "The Active Directory Recycle Bin optional feature is not enabled. Without it, accidentally deleted objects (accounts, GPOs) cannot be easily recovered, enabling denial-of-service via object deletion.",
+		Remediation: "Enable the AD Recycle Bin: Enable-ADOptionalFeature 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target <forest>",
+		MITRE:       []string{}},
+
+	{ID: "S006", Name: "Machine Account Quota allows domain-joined computers by any user", Category: CategoryADStructure, Severity: SeverityMedium,
+		Description: "ms-DS-MachineAccountQuota is set above 0, allowing any domain user to join up to that many computers to the domain. Attackers can create machine accounts for resource-based constrained delegation or Kerberos relay attacks.",
+		Remediation: "Set ms-DS-MachineAccountQuota to 0 on the domain object: Set-ADDomain -Identity <domain> -Replace @{'ms-DS-MachineAccountQuota'='0'}",
+		MITRE:       []string{"T1136.002", "T1558"}},
+
+	{ID: "S007", Name: "Inactive computer accounts", Category: CategoryADStructure, Severity: SeverityLow,
+		Description: "Computer accounts have not authenticated in over 90 days. Stale machine accounts increase the attack surface and may retain sensitive group memberships.",
+		Remediation: "Disable then delete computer accounts inactive for 90+ days. Implement quarterly stale account reviews.",
+		MITRE:       []string{"T1078.002"}},
+
+	// PKI / ADCS
+	{ID: "PKI001", Name: "ESC1: Certificate template allows SAN with low-privilege enrollment", Category: CategoryPKI, Severity: SeverityCritical,
+		Description: "One or more certificate templates allow the enrollee to supply a Subject Alternative Name (SAN), require client authentication, and permit low-privilege users to enroll. An attacker can request a certificate for any user including Domain Admins and authenticate as them.",
+		Remediation: "Remove CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT from templates used by normal users. Require Manager Approval on sensitive templates. Use CA enforcement to block SAN requests.",
+		MITRE:       []string{"T1649"},
+		References:  []string{"https://posts.specterops.io/certified-pre-owned-d95910965cd2"}},
+
+	{ID: "PKI002", Name: "ESC2: Any-Purpose or SubCA certificate template", Category: CategoryPKI, Severity: SeverityCritical,
+		Description: "A certificate template has the Any Purpose EKU or no EKU at all (SubCA), meaning issued certificates can be used for any purpose including authentication, code signing, and as a SubCA to sign further certificates.",
+		Remediation: "Restrict EKUs to the minimum required. Never use Any Purpose or empty EKU on templates accessible to non-admins.",
+		MITRE:       []string{"T1649"},
+		References:  []string{"https://posts.specterops.io/certified-pre-owned-d95910965cd2"}},
+
+	{ID: "PKI003", Name: "ESC3: Certificate Request Agent template accessible", Category: CategoryPKI, Severity: SeverityHigh,
+		Description: "A certificate template with the Certificate Request Agent EKU can be enrolled by low-privilege users. This allows them to request certificates on behalf of any user, including privileged accounts.",
+		Remediation: "Restrict enrollment on Certificate Request Agent templates to administrators only. Require Manager Approval.",
+		MITRE:       []string{"T1649"},
+		References:  []string{"https://posts.specterops.io/certified-pre-owned-d95910965cd2"}},
+
+	{ID: "PKI004", Name: "ESC4: Vulnerable certificate template ACL", Category: CategoryPKI, Severity: SeverityHigh,
+		Description: "One or more certificate templates have weak ACLs granting low-privilege users write access (WriteDACL, WriteOwner, WriteProperty, GenericAll). An attacker can modify the template to introduce ESC1 conditions.",
+		Remediation: "Audit and tighten ACLs on all certificate templates. Only Domain Admins and Enterprise Admins should have write access.",
+		MITRE:       []string{"T1649"},
+		References:  []string{"https://posts.specterops.io/certified-pre-owned-d95910965cd2"}},
+
+	{ID: "PKI005", Name: "ESC6: CA has EDITF_ATTRIBUTESUBJECTALTNAME2 enabled", Category: CategoryPKI, Severity: SeverityCritical,
+		Description: "The Certificate Authority has the EDITF_ATTRIBUTESUBJECTALTNAME2 flag set, allowing SAN values to be specified in any certificate request regardless of template settings. Any user who can enroll in any template can impersonate any identity.",
+		Remediation: "Disable EDITF_ATTRIBUTESUBJECTALTNAME2 on the CA: certutil -config <CA> -setreg policy\\EditFlags -EDITF_ATTRIBUTESUBJECTALTNAME2; restart CertSvc.",
+		MITRE:       []string{"T1649"},
+		References:  []string{"https://posts.specterops.io/certified-pre-owned-d95910965cd2"}},
+
+	{ID: "PKI006", Name: "ESC7: Vulnerable CA ACL (low-priv ManageCA/ManageCertificates)", Category: CategoryPKI, Severity: SeverityHigh,
+		Description: "Low-privilege users have ManageCA or ManageCertificates rights on a Certificate Authority. This can be used to approve pending certificate requests, change CA configuration, or enable EDITF_ATTRIBUTESUBJECTALTNAME2.",
+		Remediation: "Audit CA ACLs. Only Enterprise Admins and designated PKI admins should hold ManageCA/ManageCertificates rights.",
+		MITRE:       []string{"T1649"},
+		References:  []string{"https://posts.specterops.io/certified-pre-owned-d95910965cd2"}},
+
+	// NTLM & Authentication
+	{ID: "N001", Name: "RC4 Kerberos encryption still permitted", Category: CategoryNTLM, Severity: SeverityMedium,
+		Description: "The domain still allows RC4-HMAC Kerberos encryption (msDS-SupportedEncryptionTypes). RC4 is a weak cipher; attackers who capture service tickets can crack them faster than AES tickets.",
+		Remediation: "Set msDS-SupportedEncryptionTypes on accounts to enforce AES128/AES256 only. Raise domain and forest functional level to 2016+ to enforce AES for new accounts.",
+		MITRE:       []string{"T1558.003"}},
+
+	{ID: "N002", Name: "Shadow Credentials set on privileged accounts", Category: CategoryPersistence, Severity: SeverityCritical,
+		Description: "Privileged accounts have the msDS-KeyCredentialLink attribute populated. This attribute enables certificate-based authentication via Key Trust. Unexpected entries could represent a persistence mechanism planted by an attacker.",
+		Remediation: "Audit msDS-KeyCredentialLink on all privileged accounts. Remove any unexpected entries. Enable alerting on changes to this attribute.",
+		MITRE:       []string{"T1098.001"},
+		References:  []string{"https://posts.specterops.io/shadow-credentials-abusing-key-trust-account-mapping-for-takeover-8ee1a53566ab"}},
+
+	{ID: "N003", Name: "NTLMv1 permitted in domain", Category: CategoryNTLM, Severity: SeverityHigh,
+		Description: "The LAN Manager Authentication Level is configured to allow NTLMv1 responses. NTLMv1 challenges can be cracked in seconds with modern hardware and captured via network interception.",
+		Remediation: "Set Network Security: LAN Manager Authentication Level to 'Send NTLMv2 response only. Refuse LM & NTLM' (level 5) via GPO.",
+		MITRE:       []string{"T1557.001", "T1110"}},
 }

@@ -446,7 +446,8 @@ function StepLog({ job }: { job: InstallJob | null }) {
 function ManualRegisterPanel() {
   const [open, setOpen] = useState(false)
   const qc = useQueryClient()
-  const [form, setForm] = useState({ name: '', hostname: '', domain: '', ip_address: '' })
+  const emptyForm = { name: '', hostname: '', domain: '', ip_address: '', dc_username: '', dc_password: '' }
+  const [form, setForm] = useState(emptyForm)
   const [result, setResult] = useState<{ api_key: string } | null>(null)
 
   const register = useMutation({
@@ -464,7 +465,7 @@ function ManualRegisterPanel() {
         className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-300 transition-colors"
       >
         <Plus className="w-4 h-4" />
-        Register agent manually
+        Add Domain Target (LDAP)
       </button>
     )
   }
@@ -472,7 +473,10 @@ function ManualRegisterPanel() {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-300">Manual Registration</h3>
+        <div>
+          <h3 className="text-sm font-semibold text-gray-300">Add Domain Target</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Connects via LDAP port 389 — no agent or firewall changes needed</p>
+        </div>
         <button onClick={() => setOpen(false)} className="text-gray-600 hover:text-gray-400">
           <X className="w-4 h-4" />
         </button>
@@ -480,39 +484,55 @@ function ManualRegisterPanel() {
 
       {result ? (
         <div className="space-y-3">
-          <p className="text-sm text-emerald-400">Agent registered. Copy the API key — it won't be shown again.</p>
-          <div className="bg-gray-800 rounded-lg px-4 py-3">
-            <p className="text-xs text-gray-500 mb-1">API Key</p>
-            <code className="text-sm text-violet-300 break-all font-mono">{result.api_key}</code>
+          <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg px-4 py-3 text-sm text-emerald-300">
+            <p className="font-medium">Domain target registered successfully</p>
+            <p className="text-xs text-emerald-400/70 mt-1">Go to Scanner to start a security assessment.</p>
           </div>
           <button
-            onClick={() => { setResult(null); setForm({ name: '', hostname: '', domain: '', ip_address: '' }) }}
+            onClick={() => { setResult(null); setForm(emptyForm) }}
             className="text-sm text-gray-400 hover:text-white transition-colors"
           >
-            Register another
+            Add another
           </button>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3">
-            {(['name', 'hostname', 'domain', 'ip_address'] as const).map(k => (
-              <div key={k}>
-                <label className="text-xs text-gray-500 mb-1 block capitalize">{k.replace('_', ' ')}</label>
-                <input
-                  value={form[k]}
-                  onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
-                  className="input"
-                />
-              </div>
-            ))}
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Name <span className="text-red-400">*</span></label>
+              <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="DC01" className="input" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">DC IP Address <span className="text-red-400">*</span></label>
+              <input value={form.ip_address} onChange={e => setForm(f => ({...f, ip_address: e.target.value}))} placeholder="172.16.242.57" className="input" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Domain (FQDN) <span className="text-red-400">*</span></label>
+              <input value={form.domain} onChange={e => setForm(f => ({...f, domain: e.target.value, hostname: 'dc01.'+e.target.value}))} placeholder="corp.local" className="input" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Hostname</label>
+              <input value={form.hostname} onChange={e => setForm(f => ({...f, hostname: e.target.value}))} placeholder="dc01.corp.local" className="input" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Domain Username <span className="text-red-400">*</span></label>
+              <input value={form.dc_username} onChange={e => setForm(f => ({...f, dc_username: e.target.value}))} placeholder="administrator" autoComplete="off" className="input" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Password <span className="text-red-400">*</span></label>
+              <input type="password" value={form.dc_password} onChange={e => setForm(f => ({...f, dc_password: e.target.value}))} autoComplete="new-password" className="input" />
+            </div>
+          </div>
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
+            Any domain user account works — read-only access is sufficient for all security checks.
           </div>
           <button
-            disabled={!form.name || !form.hostname || !form.domain || register.isPending}
+            disabled={!form.name || !form.ip_address || !form.domain || !form.dc_username || !form.dc_password || register.isPending}
             onClick={() => register.mutate()}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-sm text-white rounded-lg transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-sm text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {register.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-            Register
+            Register Domain Target
           </button>
         </>
       )}

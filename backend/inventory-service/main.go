@@ -29,6 +29,14 @@ func main() {
 	}
 	defer pool.Close()
 
+	pool.Exec(context.Background(), `
+		CREATE TABLE IF NOT EXISTS snapshot_metadata (
+			snapshot_id UUID REFERENCES inventory_snapshots(id) ON DELETE CASCADE,
+			key         VARCHAR(50) NOT NULL,
+			value       JSONB,
+			PRIMARY KEY (snapshot_id, key)
+		)`)
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -98,6 +106,19 @@ func main() {
 	})
 	r.GET("/snapshots/:id/dcs", func(c *gin.Context) {
 		queryInventory(c, pool, "ad_domain_controllers", c.Param("id"))
+	})
+
+	// Topology endpoint — returns a rich view for graph visualization
+	r.GET("/snapshots/:id/topology", func(c *gin.Context) {
+		buildTopologyResponse(c, pool, c.Param("id"), logger)
+	})
+
+	// ADCS
+	r.GET("/snapshots/:id/cert-templates", func(c *gin.Context) {
+		querySnapshotMeta(c, pool, "cert_templates", c.Param("id"))
+	})
+	r.GET("/snapshots/:id/cert-authorities", func(c *gin.Context) {
+		querySnapshotMeta(c, pool, "cert_authorities", c.Param("id"))
 	})
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
@@ -215,6 +236,46 @@ func storeTaskData(pool *pgxpool.Pool, snapshotID, scanID, taskType string, data
 				count++
 			}
 		}
+
+	case "adcs":
+		// Store the full ADCS payload as snapshot metadata
+		adcsJSON, _ := json.Marshal(data)
+		pool.Exec(ctx,
+			`INSERT INTO snapshot_metadata (snapshot_id, key, value)
+			 VALUES ($1, 'adcs', $2)
+			 ON CONFLICT (snapshot_id, key) DO UPDATE SET value = EXCLUDED.value`,
+			snapshotID, adcsJSON,
+		)
+		if templates, ok := data["cert_templates"].([]interface{}); ok {
+			count += len(templates)
+		}
+
+	case "sites":
+		// Store sites payload as snapshot metadata
+		sitesJSON, _ := json.Marshal(data)
+		pool.Exec(ctx,
+			`INSERT INTO snapshot_metadata (snapshot_id, key, value)
+			 VALUES ($1, 'sites', $2)
+			 ON CONFLICT (snapshot_id, key) DO UPDATE SET value = EXCLUDED.value`,
+			snapshotID, sitesJSON,
+		)
+		if sites, ok := data["sites"].([]interface{}); ok {
+			count += len(sites)
+		}
+
+		// Also persist machine_account_quota and recycle_bin on the snapshot
+		maq := intVal(data, "machine_account_quota")
+		rb := boolVal(data, "recycle_bin_enabled")
+		maqJSON, _ := json.Marshal(map[string]interface{}{
+			"machine_account_quota": maq,
+			"recycle_bin_enabled":   rb,
+		})
+		pool.Exec(ctx,
+			`INSERT INTO snapshot_metadata (snapshot_id, key, value)
+			 VALUES ($1, 'domain_config', $2)
+			 ON CONFLICT (snapshot_id, key) DO UPDATE SET value = EXCLUDED.value`,
+			snapshotID, maqJSON,
+		)
 	}
 
 	return count
@@ -223,17 +284,20 @@ func storeTaskData(pool *pgxpool.Pool, snapshotID, scanID, taskType string, data
 func buildFullSnapshot(pool *pgxpool.Pool, snapshotID string, logger *zap.Logger) map[string]interface{} {
 	ctx := context.Background()
 	snapshot := map[string]interface{}{
-		"id":      snapshotID,
-		"users":   []interface{}{},
-		"groups":  []interface{}{},
-		"computers": []interface{}{},
-		"gpos":    []interface{}{},
+		"id":                 snapshotID,
+		"users":              []interface{}{},
+		"groups":             []interface{}{},
+		"computers":          []interface{}{},
+		"gpos":               []interface{}{},
 		"domain_controllers": []interface{}{},
-		"trusts":  []interface{}{},
-		"acls":    []interface{}{},
+		"trusts":             []interface{}{},
+		"acls":               []interface{}{},
+		"cert_templates":     []interface{}{},
+		"cert_authorities":   []interface{}{},
+		"machine_account_quota": 0,
+		"recycle_bin_enabled":   false,
 	}
 
-	// Load each table
 	for _, table := range []string{"ad_users", "ad_groups", "ad_computers", "ad_gpos", "ad_domain_controllers"} {
 		rows, err := pool.Query(ctx, `SELECT data FROM `+table+` WHERE snapshot_id=$1`, snapshotID)
 		if err != nil {
@@ -249,12 +313,31 @@ func buildFullSnapshot(pool *pgxpool.Pool, snapshotID string, logger *zap.Logger
 			items = append(items, item)
 		}
 		rows.Close()
-
-		key := tableToKey(table)
 		if items != nil {
-			snapshot[key] = items
+			snapshot[tableToKey(table)] = items
 		}
 	}
+
+	// Load ADCS metadata
+	var adcsData map[string]interface{}
+	loadMeta(ctx, pool, snapshotID, "adcs", &adcsData)
+	if adcsData != nil {
+		if v, ok := adcsData["cert_templates"]; ok {
+			snapshot["cert_templates"] = v
+		}
+		if v, ok := adcsData["cert_authorities"]; ok {
+			snapshot["cert_authorities"] = v
+		}
+	}
+
+	// Load domain config (machine quota, recycle bin)
+	var domainCfg map[string]interface{}
+	loadMeta(ctx, pool, snapshotID, "domain_config", &domainCfg)
+	if domainCfg != nil {
+		snapshot["machine_account_quota"] = extractIntKey(domainCfg, "machine_account_quota")
+		snapshot["recycle_bin_enabled"] = extractBoolKey(domainCfg, "recycle_bin_enabled")
+	}
+
 	return snapshot
 }
 
@@ -279,6 +362,139 @@ func queryInventory(c *gin.Context, pool *pgxpool.Pool, table, snapshotID string
 		items = []interface{}{}
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
+}
+
+// buildTopologyResponse assembles a rich topology payload for the frontend graph.
+func buildTopologyResponse(c *gin.Context, pool *pgxpool.Pool, snapshotID string, logger *zap.Logger) {
+	ctx := context.Background()
+
+	// DCs
+	dcRows, _ := pool.Query(ctx, `SELECT data FROM ad_domain_controllers WHERE snapshot_id=$1`, snapshotID)
+	var dcs []interface{}
+	for dcRows.Next() {
+		var d []byte
+		dcRows.Scan(&d)
+		var v interface{}
+		json.Unmarshal(d, &v)
+		dcs = append(dcs, v)
+	}
+	dcRows.Close()
+
+	// Trusts (stored in topology metadata or domain info)
+	var sitesData, adcsData, domainCfg map[string]interface{}
+	loadMeta(ctx, pool, snapshotID, "sites", &sitesData)
+	loadMeta(ctx, pool, snapshotID, "adcs", &adcsData)
+	loadMeta(ctx, pool, snapshotID, "domain_config", &domainCfg)
+
+	// Snapshot base info
+	var domain string
+	var takenAt time.Time
+	pool.QueryRow(ctx, `SELECT domain, taken_at FROM inventory_snapshots WHERE id=$1`, snapshotID).Scan(&domain, &takenAt)
+
+	// Domain controllers count
+	var dcCount, userCount, computerCount, groupCount int
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM ad_domain_controllers WHERE snapshot_id=$1`, snapshotID).Scan(&dcCount)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM ad_users WHERE snapshot_id=$1`, snapshotID).Scan(&userCount)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM ad_computers WHERE snapshot_id=$1`, snapshotID).Scan(&computerCount)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM ad_groups WHERE snapshot_id=$1`, snapshotID).Scan(&groupCount)
+
+	topo := map[string]interface{}{
+		"snapshot_id": snapshotID,
+		"domain":      domain,
+		"taken_at":    takenAt,
+		"summary": map[string]interface{}{
+			"dc_count":       dcCount,
+			"user_count":     userCount,
+			"computer_count": computerCount,
+			"group_count":    groupCount,
+		},
+		"domain_controllers": nilSlice(dcs),
+		"sites":              extractKey(sitesData, "sites"),
+		"site_links":         extractKey(sitesData, "site_links"),
+		"cert_templates":     extractKey(adcsData, "cert_templates"),
+		"cert_authorities":   extractKey(adcsData, "cert_authorities"),
+		"machine_account_quota": extractIntKey(domainCfg, "machine_account_quota"),
+		"recycle_bin_enabled":   extractBoolKey(domainCfg, "recycle_bin_enabled"),
+	}
+	c.JSON(200, topo)
+}
+
+// querySnapshotMeta reads a key from snapshot_metadata and returns parsed JSON.
+func querySnapshotMeta(c *gin.Context, pool *pgxpool.Pool, key, snapshotID string) {
+	ctx := context.Background()
+	var raw []byte
+	err := pool.QueryRow(ctx,
+		`SELECT value FROM snapshot_metadata WHERE snapshot_id=$1 AND key=$2`, snapshotID, key,
+	).Scan(&raw)
+	if err != nil {
+		c.JSON(200, gin.H{"items": []interface{}{}, "total": 0})
+		return
+	}
+	var data map[string]interface{}
+	json.Unmarshal(raw, &data)
+	items, _ := data[key].([]interface{})
+	if items == nil {
+		items = []interface{}{}
+	}
+	c.JSON(200, gin.H{"items": items, "total": len(items)})
+}
+
+func loadMeta(ctx context.Context, pool *pgxpool.Pool, snapshotID, key string, out *map[string]interface{}) {
+	var raw []byte
+	pool.QueryRow(ctx, `SELECT value FROM snapshot_metadata WHERE snapshot_id=$1 AND key=$2`, snapshotID, key).Scan(&raw)
+	if raw != nil {
+		json.Unmarshal(raw, out)
+	}
+}
+
+func extractKey(m map[string]interface{}, key string) interface{} {
+	if m == nil {
+		return []interface{}{}
+	}
+	if v, ok := m[key]; ok {
+		return v
+	}
+	return []interface{}{}
+}
+
+func extractIntKey(m map[string]interface{}, key string) int {
+	if m == nil {
+		return 0
+	}
+	if v, ok := m[key]; ok {
+		if f, ok := v.(float64); ok {
+			return int(f)
+		}
+	}
+	return 0
+}
+
+func extractBoolKey(m map[string]interface{}, key string) bool {
+	if m == nil {
+		return false
+	}
+	if v, ok := m[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func nilSlice(s []interface{}) []interface{} {
+	if s == nil {
+		return []interface{}{}
+	}
+	return s
+}
+
+func intVal(m map[string]interface{}, key string) int {
+	if v, ok := m[key]; ok {
+		if f, ok := v.(float64); ok {
+			return int(f)
+		}
+	}
+	return 0
 }
 
 func tableToKey(table string) string {

@@ -111,6 +111,7 @@ type ADUser struct {
 	IsMSA                  bool      `json:"is_msa"`   // Managed Service Account
 	IsGMSA                 bool      `json:"is_gmsa"`  // Group Managed Service Account
 	IsDCSyncCapable        bool      `json:"is_dcsync_capable"`
+	HasShadowCredentials   bool      `json:"has_shadow_credentials"` // msDS-KeyCredentialLink set
 
 	// UAC raw value
 	UserAccountControl     int       `json:"user_account_control"`
@@ -402,23 +403,110 @@ type FineGrainedPasswordPolicy struct {
 }
 
 // ============================================================
+// ADCS – Active Directory Certificate Services
+// ============================================================
+
+type ADCertificateTemplate struct {
+	Name                    string   `json:"name"`
+	DisplayName             string   `json:"display_name"`
+	DistinguishedName       string   `json:"distinguished_name"`
+	OID                     string   `json:"oid"`
+	SchemaVersion           int      `json:"schema_version"`
+	ValidityPeriod          string   `json:"validity_period"`
+	RenewalPeriod           string   `json:"renewal_period"`
+
+	// Enrollment flags (msPKI-Enrollment-Flag)
+	EnrolleeSuppliesSubject bool     `json:"enrollee_supplies_subject"` // CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT = 0x1
+	NoSecurityExtension     bool     `json:"no_security_extension"`     // CT_FLAG_NO_SECURITY_EXTENSION = 0x80000
+	ReqManagerApproval      bool     `json:"requires_manager_approval"` // CT_FLAG_PEND_ALL_REQUESTS = 0x2
+
+	// Key usage / EKU
+	ExtendedKeyUsage        []string `json:"extended_key_usage"`
+	HasClientAuth           bool     `json:"has_client_auth"`
+	HasAnyPurpose           bool     `json:"has_any_purpose"`
+	HasCertRequestAgent     bool     `json:"has_cert_request_agent"`
+
+	// Access control
+	EnrollableBy            []string `json:"enrollable_by"`   // principals with Enroll right
+	WriteableBy             []string `json:"writeable_by"`    // principals with write access
+	LowPrivEnrollment       bool     `json:"low_priv_enrollment"` // Authenticated Users / Domain Computers can enroll
+
+	// ESC classification
+	VulnerableESC1          bool     `json:"vulnerable_esc1"`  // Enrollee supplies SAN + client auth + low-priv enroll
+	VulnerableESC2          bool     `json:"vulnerable_esc2"`  // Any Purpose or SubCA
+	VulnerableESC3          bool     `json:"vulnerable_esc3"`  // Certificate Request Agent
+	VulnerableESC4          bool     `json:"vulnerable_esc4"`  // Low-priv write access to template
+}
+
+type ADCertificateAuthority struct {
+	Name                    string   `json:"name"`
+	DistinguishedName       string   `json:"distinguished_name"`
+	DNSHostName             string   `json:"dns_host_name"`
+	Flags                   int      `json:"flags"`
+
+	// CA flags
+	UserSpecifiedSAN        bool     `json:"user_specified_san"`  // EDITF_ATTRIBUTESUBJECTALTNAME2 = ESC6
+	ManageCALowPriv         bool     `json:"manage_ca_low_priv"`  // Low-priv ManageCA = ESC7
+
+	// ACL
+	ACLEntries              []ACLEntry `json:"acl_entries"`
+
+	// Published templates
+	Templates               []string `json:"templates"`
+
+	// Web enrollment endpoint (for ESC8)
+	WebEnrollmentEnabled    bool     `json:"web_enrollment_enabled"`
+}
+
+// ============================================================
+// Sites & Subnets
+// ============================================================
+
+type ADSiteDetailed struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Subnets     []ADSubnet  `json:"subnets"`
+	SiteLinks   []string    `json:"site_links"`
+	DCs         []string    `json:"dcs"`
+}
+
+type ADSubnet struct {
+	Name        string `json:"name"` // e.g. 192.168.1.0/24
+	SiteName    string `json:"site_name"`
+	Description string `json:"description"`
+}
+
+type ADSiteLink struct {
+	Name        string   `json:"name"`
+	Sites       []string `json:"sites"`
+	Cost        int      `json:"cost"`
+	Interval    int      `json:"replication_interval_minutes"`
+}
+
+// ============================================================
 // Inventory Snapshot (wraps everything for a scan)
 // ============================================================
 
 type InventorySnapshot struct {
-	ID          string    `json:"id"`
-	ScanID      string    `json:"scan_id"`
-	TakenAt     time.Time `json:"taken_at"`
-	Forest      *ADForest `json:"forest,omitempty"`
-	Domains     []ADDomain `json:"domains,omitempty"`
-	Users       []ADUser   `json:"users,omitempty"`
-	Groups      []ADGroup  `json:"groups,omitempty"`
-	Computers   []ADComputer `json:"computers,omitempty"`
-	DomainControllers []ADDomainController `json:"domain_controllers,omitempty"`
-	GPOs        []ADGPO    `json:"gpos,omitempty"`
-	OUs         []ADOU     `json:"ous,omitempty"`
-	ACLs        []ADACL    `json:"acls,omitempty"`
-	KerberosConfig *KerberosConfig `json:"kerberos_config,omitempty"`
-	FGPPs       []FineGrainedPasswordPolicy `json:"fgpps,omitempty"`
-	Trusts      []ADTrust  `json:"trusts,omitempty"`
+	ID                   string                  `json:"id"`
+	ScanID               string                  `json:"scan_id"`
+	TakenAt              time.Time               `json:"taken_at"`
+	Forest               *ADForest               `json:"forest,omitempty"`
+	Domains              []ADDomain              `json:"domains,omitempty"`
+	Users                []ADUser                `json:"users,omitempty"`
+	Groups               []ADGroup               `json:"groups,omitempty"`
+	Computers            []ADComputer            `json:"computers,omitempty"`
+	DomainControllers    []ADDomainController    `json:"domain_controllers,omitempty"`
+	GPOs                 []ADGPO                 `json:"gpos,omitempty"`
+	OUs                  []ADOU                  `json:"ous,omitempty"`
+	ACLs                 []ADACL                 `json:"acls,omitempty"`
+	KerberosConfig       *KerberosConfig         `json:"kerberos_config,omitempty"`
+	FGPPs                []FineGrainedPasswordPolicy `json:"fgpps,omitempty"`
+	Trusts               []ADTrust               `json:"trusts,omitempty"`
+	CertTemplates        []ADCertificateTemplate `json:"cert_templates,omitempty"`
+	CertAuthorities      []ADCertificateAuthority `json:"cert_authorities,omitempty"`
+	Sites                []ADSiteDetailed        `json:"sites,omitempty"`
+	SiteLinks            []ADSiteLink            `json:"site_links,omitempty"`
+	MachineAccountQuota  int                     `json:"machine_account_quota"`
+	RecycleBinEnabled    bool                    `json:"recycle_bin_enabled"`
 }

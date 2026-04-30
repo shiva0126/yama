@@ -105,6 +105,7 @@ export const findingsApi = {
 // Reports
 // ============================================================
 export const reportsApi = {
+  list: () => api.get<{ reports: any[]; total: number }>('/reports'),
   generate: (scanId: string, format: 'html' | 'pdf' | 'json') =>
     api.post<{ id: string }>('/reports/generate', { scan_id: scanId, format }),
   get: (id: string) => api.get(`/reports/${id}`),

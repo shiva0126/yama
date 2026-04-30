@@ -26,6 +26,8 @@ const (
 	TaskTypeTrusts    TaskType = "trusts"
 	TaskTypeOUs       TaskType = "ous"
 	TaskTypeFGPP      TaskType = "fgpp"
+	TaskTypeADCS      TaskType = "adcs"
+	TaskTypeSites     TaskType = "sites"
 )
 
 var AllTaskTypes = []TaskType{
@@ -40,6 +42,8 @@ var AllTaskTypes = []TaskType{
 	TaskTypeTrusts,
 	TaskTypeOUs,
 	TaskTypeFGPP,
+	TaskTypeADCS,
+	TaskTypeSites,
 }
 
 type ScanJob struct {
@@ -88,6 +92,7 @@ type CollectorAgent struct {
 	Hostname    string    `json:"hostname"`
 	Domain      string    `json:"domain"`
 	IPAddress   string    `json:"ip_address"`
+	Port        int       `json:"port"`
 	APIKey      string    `json:"api_key,omitempty"`
 	Status      string    `json:"status"` // online, offline, busy
 	LastSeen    time.Time `json:"last_seen"`

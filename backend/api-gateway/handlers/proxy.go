@@ -200,6 +200,8 @@ func (h *InventoryHandler) GetGPOs(c *gin.Context)             { proxyGETWithQue
 func (h *InventoryHandler) GetDomainControllers(c *gin.Context){ proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/dcs", h.logger) }
 func (h *InventoryHandler) GetTrusts(c *gin.Context)           { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/trusts", h.logger) }
 func (h *InventoryHandler) GetTopology(c *gin.Context)         { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/topology", h.logger) }
+func (h *InventoryHandler) GetCertTemplates(c *gin.Context)    { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/cert-templates", h.logger) }
+func (h *InventoryHandler) GetCertAuthorities(c *gin.Context)  { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/cert-authorities", h.logger) }
 
 // FindingsHandler proxies to analysis-engine
 type FindingsHandler struct {
@@ -224,6 +226,7 @@ type ReportHandler struct {
 func NewReportHandler(serviceURL string, logger *zap.Logger) *ReportHandler {
 	return &ReportHandler{serviceURL: serviceURL, logger: logger}
 }
-func (h *ReportHandler) Generate(c *gin.Context)  { proxyPOST(c, h.serviceURL, "/reports/generate", h.logger) }
-func (h *ReportHandler) GetReport(c *gin.Context) { proxyGET(c, h.serviceURL, "/reports/"+c.Param("id"), h.logger) }
-func (h *ReportHandler) Download(c *gin.Context)  { proxyGET(c, h.serviceURL, "/reports/"+c.Param("id")+"/download", h.logger) }
+func (h *ReportHandler) Generate(c *gin.Context)     { proxyPOST(c, h.serviceURL, "/reports/generate", h.logger) }
+func (h *ReportHandler) GetReport(c *gin.Context)    { proxyGET(c, h.serviceURL, "/reports/"+c.Param("id"), h.logger) }
+func (h *ReportHandler) Download(c *gin.Context)     { proxyGET(c, h.serviceURL, "/reports/"+c.Param("id")+"/download", h.logger) }
+func (h *ReportHandler) ListReports(c *gin.Context)  { proxyGET(c, h.serviceURL, "/reports", h.logger) }

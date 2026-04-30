@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"ad-assessment/scan-orchestrator/ldapcollector"
 	"ad-assessment/shared/config"
 	"ad-assessment/shared/types"
 
@@ -48,6 +49,9 @@ func (o *Orchestrator) RegisterAgent(c *gin.Context) {
 		Hostname     string   `json:"hostname" binding:"required"`
 		Domain       string   `json:"domain" binding:"required"`
 		IPAddress    string   `json:"ip_address"`
+		Port         int      `json:"port"`
+		DCUsername   string   `json:"dc_username"`
+		DCPassword   string   `json:"dc_password"`
 		Version      string   `json:"version"`
 		Capabilities []string `json:"capabilities"`
 	}
@@ -55,14 +59,19 @@ func (o *Orchestrator) RegisterAgent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.Port == 0 {
+		req.Port = 389
+	}
 
 	apiKey := generateAPIKey()
 	id := uuid.New().String()
 
 	_, err := o.db.Exec(context.Background(),
-		`INSERT INTO agents (id, name, hostname, domain, ip_address, api_key, status, last_seen, version, capabilities)
-		 VALUES ($1, $2, $3, $4, $5, $6, 'online', NOW(), $7, $8)`,
-		id, req.Name, req.Hostname, req.Domain, req.IPAddress, apiKey, req.Version, req.Capabilities,
+		`INSERT INTO agents (id, name, hostname, domain, ip_address, port, dc_username, dc_password,
+		  api_key, status, last_seen, version, capabilities)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'online', NOW(), $10, $11)`,
+		id, req.Name, req.Hostname, req.Domain, req.IPAddress, req.Port,
+		req.DCUsername, req.DCPassword, apiKey, req.Version, req.Capabilities,
 	)
 	if err != nil {
 		o.logger.Error("failed to register agent", zap.Error(err))
@@ -79,7 +88,7 @@ func (o *Orchestrator) RegisterAgent(c *gin.Context) {
 
 func (o *Orchestrator) ListAgents(c *gin.Context) {
 	rows, err := o.db.Query(context.Background(),
-		`SELECT id, name, hostname, domain, ip_address, status, last_seen, version FROM agents ORDER BY created_at DESC`)
+		`SELECT id, name, hostname, domain, ip_address, port, status, last_seen, version FROM agents ORDER BY created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -89,7 +98,7 @@ func (o *Orchestrator) ListAgents(c *gin.Context) {
 	var agents []types.CollectorAgent
 	for rows.Next() {
 		var a types.CollectorAgent
-		rows.Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Status, &a.LastSeen, &a.Version)
+		rows.Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Port, &a.Status, &a.LastSeen, &a.Version)
 		agents = append(agents, a)
 	}
 	c.JSON(http.StatusOK, gin.H{"agents": agents, "total": len(agents)})
@@ -99,8 +108,8 @@ func (o *Orchestrator) GetAgent(c *gin.Context) {
 	id := c.Param("id")
 	var a types.CollectorAgent
 	err := o.db.QueryRow(context.Background(),
-		`SELECT id, name, hostname, domain, ip_address, status, last_seen, version FROM agents WHERE id=$1`, id,
-	).Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Status, &a.LastSeen, &a.Version)
+		`SELECT id, name, hostname, domain, ip_address, port, status, last_seen, version FROM agents WHERE id=$1`, id,
+	).Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Port, &a.Status, &a.LastSeen, &a.Version)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
@@ -188,100 +197,76 @@ func (o *Orchestrator) CreateScan(c *gin.Context) {
 func (o *Orchestrator) executeScan(scanID, agentID, agentAPIKey, domain string, tasks []types.TaskType) {
 	ctx := context.Background()
 
-	// Mark scan as running
 	o.db.Exec(ctx, `UPDATE scans SET status='running', started_at=NOW() WHERE id=$1`, scanID)
-	o.publishProgress(scanID, 5, "Starting collection...")
+	o.publishProgress(scanID, 5, "Connecting to domain controller via LDAP...")
 
-	// Get agent URL from DB
-	var agentURL string
-	o.db.QueryRow(ctx, `SELECT ip_address FROM agents WHERE id=$1`, agentID).Scan(&agentURL)
-	if agentURL == "" {
-		o.db.Exec(ctx, `UPDATE scans SET status='failed', error='agent URL not found' WHERE id=$1`, scanID)
+	// Read agent credentials from DB
+	var dcIP, dcUsername, dcPassword string
+	o.db.QueryRow(ctx,
+		`SELECT ip_address, COALESCE(dc_username,''), COALESCE(dc_password,'') FROM agents WHERE id=$1`, agentID,
+	).Scan(&dcIP, &dcUsername, &dcPassword)
+
+	if dcIP == "" {
+		o.db.Exec(ctx, `UPDATE scans SET status='failed' WHERE id=$1`, scanID)
+		o.publishProgress(scanID, 0, "Error: agent DC IP not found")
 		return
 	}
-	// Construct agent base URL (agent runs on port 9090)
-	collectorBaseURL := fmt.Sprintf("http://%s:9090", agentURL)
 
-	// Create snapshot
+	// Open LDAP connection — port 389, always open on every DC
+	coll, err := ldapcollector.New(dcIP, domain, dcUsername, dcPassword)
+	if err != nil {
+		o.logger.Error("LDAP connection failed", zap.String("dc", dcIP), zap.Error(err))
+		o.db.Exec(ctx, `UPDATE scans SET status='failed' WHERE id=$1`, scanID)
+		o.publishProgress(scanID, 0, fmt.Sprintf("LDAP connection failed: %v", err))
+		return
+	}
+	defer coll.Close()
+
+	o.publishProgress(scanID, 10, "Connected. Creating inventory snapshot...")
+
 	snapshotID := uuid.New().String()
-	o.db.Exec(ctx,
-		`INSERT INTO inventory_snapshots (id, scan_id, domain) VALUES ($1, $2, $3)`,
-		snapshotID, scanID, domain,
-	)
+	o.db.Exec(ctx, `INSERT INTO inventory_snapshots (id, scan_id, domain) VALUES ($1, $2, $3)`, snapshotID, scanID, domain)
 	o.db.Exec(ctx, `UPDATE scans SET snapshot_id=$1 WHERE id=$2`, snapshotID, scanID)
 
 	totalTasks := len(tasks)
 	completed := 0
 
 	for _, taskType := range tasks {
-		o.logger.Info("executing task", zap.String("scan_id", scanID), zap.String("task", string(taskType)))
-
-		// Mark task running
+		o.logger.Info("LDAP collect", zap.String("scan_id", scanID), zap.String("task", string(taskType)))
 		o.db.Exec(ctx,
 			`UPDATE scan_tasks SET status='running', started_at=NOW() WHERE scan_id=$1 AND task_type=$2`,
 			scanID, string(taskType),
 		)
 
-		result, err := o.callCollector(collectorBaseURL, agentAPIKey, string(taskType), domain)
+		result, err := coll.Collect(string(taskType))
 		if err != nil {
-			o.logger.Error("collector task failed", zap.String("task", string(taskType)), zap.Error(err))
+			o.logger.Error("LDAP task failed", zap.String("task", string(taskType)), zap.Error(err))
 			o.db.Exec(ctx,
 				`UPDATE scan_tasks SET status='failed', error=$1, completed_at=NOW() WHERE scan_id=$2 AND task_type=$3`,
 				err.Error(), scanID, string(taskType),
 			)
+			completed++
 			continue
 		}
 
-		// Store result in inventory service
 		itemCount := o.storeInventoryData(ctx, snapshotID, scanID, string(taskType), result)
-
 		o.db.Exec(ctx,
 			`UPDATE scan_tasks SET status='completed', items_found=$1, completed_at=NOW() WHERE scan_id=$2 AND task_type=$3`,
 			itemCount, scanID, string(taskType),
 		)
 
 		completed++
-		progress := 10 + (completed*80/totalTasks)
-		o.publishProgress(scanID, progress, fmt.Sprintf("Completed: %s (%d/%d)", taskType, completed, totalTasks))
+		progress := 10 + (completed*75/totalTasks)
+		o.publishProgress(scanID, progress, fmt.Sprintf("Collected %s (%d/%d)", taskType, completed, totalTasks))
 	}
 
-	o.publishProgress(scanID, 90, "Running security analysis...")
-
-	// Trigger analysis engine
+	o.publishProgress(scanID, 88, "Running security analysis...")
 	if err := o.triggerAnalysis(ctx, scanID, snapshotID); err != nil {
 		o.logger.Error("analysis failed", zap.Error(err))
 	}
 
 	o.db.Exec(ctx, `UPDATE scans SET status='completed', completed_at=NOW(), progress=100 WHERE id=$1`, scanID)
 	o.publishProgress(scanID, 100, "Scan complete")
-}
-
-func (o *Orchestrator) callCollector(baseURL, apiKey, taskType, domain string) (map[string]interface{}, error) {
-	url := fmt.Sprintf("%s/collect/%s", baseURL, taskType)
-	payload, _ := json.Marshal(map[string]string{"domain": domain})
-
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
-
-	resp, err := o.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("collector unreachable: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("collector returned status %d", resp.StatusCode)
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("invalid collector response: %w", err)
-	}
-	return result, nil
 }
 
 func (o *Orchestrator) storeInventoryData(ctx context.Context, snapshotID, scanID, taskType string, data map[string]interface{}) int {
@@ -337,7 +322,7 @@ func (o *Orchestrator) publishProgress(scanID string, progress int, message stri
 func (o *Orchestrator) ListScans(c *gin.Context) {
 	rows, err := o.db.Query(context.Background(),
 		`SELECT id, agent_id, domain, status, progress, overall_score, critical_count, high_count,
-		        medium_count, low_count, total_findings, created_at, started_at, completed_at
+		        medium_count, low_count, total_findings, snapshot_id, created_at, started_at, completed_at
 		 FROM scans ORDER BY created_at DESC LIMIT 50`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -351,18 +336,19 @@ func (o *Orchestrator) ListScans(c *gin.Context) {
 			id, agentID, domain, status string
 			progress, score             int
 			critical, high, medium, low, total int
+			snapshotID                  *string
 			createdAt                   time.Time
 			startedAt, completedAt      *time.Time
 		)
 		rows.Scan(&id, &agentID, &domain, &status, &progress, &score,
-			&critical, &high, &medium, &low, &total,
+			&critical, &high, &medium, &low, &total, &snapshotID,
 			&createdAt, &startedAt, &completedAt)
 
 		scans = append(scans, map[string]interface{}{
 			"id": id, "agent_id": agentID, "domain": domain,
 			"status": status, "progress": progress, "overall_score": score,
 			"critical_count": critical, "high_count": high, "medium_count": medium,
-			"low_count": low, "total_findings": total,
+			"low_count": low, "total_findings": total, "snapshot_id": snapshotID,
 			"created_at": createdAt, "started_at": startedAt, "completed_at": completedAt,
 		})
 	}

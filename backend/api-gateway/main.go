@@ -120,6 +120,8 @@ func main() {
 				inventory.GET("/snapshots/:id/dcs", inventoryHandler.GetDomainControllers)
 				inventory.GET("/snapshots/:id/trusts", inventoryHandler.GetTrusts)
 				inventory.GET("/snapshots/:id/topology", inventoryHandler.GetTopology)
+				inventory.GET("/snapshots/:id/cert-templates", inventoryHandler.GetCertTemplates)
+				inventory.GET("/snapshots/:id/cert-authorities", inventoryHandler.GetCertAuthorities)
 			}
 
 			// Findings
@@ -136,6 +138,7 @@ func main() {
 			reportHandler := handlers.NewReportHandler(cfg.ReportServiceURL, logger)
 			reports := protected.Group("/reports")
 			{
+				reports.GET("", reportHandler.ListReports)
 				reports.POST("/generate", reportHandler.Generate)
 				reports.GET("/:id", reportHandler.GetReport)
 				reports.GET("/:id/download", reportHandler.Download)
