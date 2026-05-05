@@ -1,25 +1,30 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { scansApi, inventoryApi } from '../../api'
 import ReactFlow, {
-  Background, Controls, MiniMap, useNodesState, useEdgesState,
-  type Node, type Edge
+  Background,
+  Controls,
+  MiniMap,
+  useEdgesState,
+  useNodesState,
+  type Edge,
+  type Node,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { useEffect } from 'react'
-import { Server, Users, Monitor, Shield, AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Network, Server, Shield, Users } from 'lucide-react'
+import { inventoryApi, scansApi } from '../../api'
 
 export function Topology() {
   const { data: scansData } = useQuery({
     queryKey: ['scans'],
-    queryFn: () => scansApi.list().then(r => r.data),
+    queryFn: () => scansApi.list().then((r) => r.data),
   })
 
-  const latestScan = scansData?.scans?.find(s => s.status === 'completed')
+  const latestScan = scansData?.scans?.find((scan) => scan.status === 'completed')
   const snapshotId = latestScan?.snapshot_id
 
-  const { data: topoData } = useQuery({
+  const { data: topologyData } = useQuery({
     queryKey: ['topology', snapshotId],
-    queryFn: () => snapshotId ? inventoryApi.getTopology(snapshotId).then(r => r.data) : null,
+    queryFn: () => (snapshotId ? inventoryApi.getTopology(snapshotId).then((r) => r.data) : null),
     enabled: !!snapshotId,
   })
 
@@ -27,254 +32,260 @@ export function Topology() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
   useEffect(() => {
-    if (!topoData) return
-    const { newNodes, newEdges } = buildGraph(topoData)
-    setNodes(newNodes)
-    setEdges(newEdges)
-  }, [topoData])
+    if (!topologyData) return
+    const graph = buildGraph(topologyData)
+    setNodes(graph.nodes)
+    setEdges(graph.edges)
+  }, [setEdges, setNodes, topologyData])
 
-  const summary = topoData?.summary
-  const sites: any[] = topoData?.sites ?? []
-  const maq: number = topoData?.machine_account_quota ?? 0
-  const recycleBin: boolean = topoData?.recycle_bin_enabled ?? false
-  const certTemplates: any[] = topoData?.cert_templates ?? []
-  const escCount = certTemplates.filter((t: any) => t.vulnerable_esc1 || t.vulnerable_esc2 || t.vulnerable_esc3).length
+  const summary = topologyData?.summary
+  const sites: any[] = topologyData?.sites ?? []
+  const machineAccountQuota: number = topologyData?.machine_account_quota ?? 0
+  const recycleBinEnabled: boolean = topologyData?.recycle_bin_enabled ?? false
+  const certTemplates: any[] = topologyData?.cert_templates ?? []
+  const vulnerableTemplates = certTemplates.filter(
+    (template) =>
+      template.vulnerable_esc1 ||
+      template.vulnerable_esc2 ||
+      template.vulnerable_esc3 ||
+      template.vulnerable_esc4 ||
+      template.vulnerable_esc6 ||
+      template.vulnerable_esc7
+  ).length
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold text-white">Topology</h1>
-        <p className="text-gray-400 text-sm mt-1">AD forest structure, sites, and infrastructure map</p>
-      </div>
+    <div className="space-y-6">
+      <section className="panel-strong p-6">
+        <p className="label">Forest topology</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Topology</h2>
 
-      {/* Summary bar */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <SummaryCard icon={Server} label="Domain Controllers" value={summary.dc_count} color="blue" />
-          <SummaryCard icon={Users} label="User Accounts" value={summary.user_count} color="violet" />
-          <SummaryCard icon={Monitor} label="Computers" value={summary.computer_count} color="emerald" />
-          <SummaryCard icon={Shield} label="Groups" value={summary.group_count} color="amber" />
-        </div>
-      )}
-
-      {/* Risk flags */}
-      {topoData && (
-        <div className="flex flex-wrap gap-2">
-          <RiskBadge label={`Machine Account Quota: ${maq}`} bad={maq > 0} good={maq === 0} />
-          <RiskBadge label="AD Recycle Bin" bad={!recycleBin} good={recycleBin} badText="Disabled" goodText="Enabled" />
-          {escCount > 0 && (
-            <RiskBadge label={`ADCS: ${escCount} vulnerable template(s)`} bad />
-          )}
-          {sites.length > 0 && (
-            <span className="text-xs px-2 py-1 rounded-full bg-gray-800 text-gray-400 border border-gray-700">
-              {sites.length} site{sites.length > 1 ? 's' : ''}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Main graph */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden" style={{ height: 560 }}>
-        {!snapshotId ? (
-          <div className="flex items-center justify-center h-full text-gray-500">
-            Run a scan to view the topology
+        {summary && (
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <SummaryCard icon={Server} label="Domain controllers" value={summary.dc_count} />
+            <SummaryCard icon={Users} label="User identities" value={summary.user_count} />
+            <SummaryCard icon={Network} label="Computer objects" value={summary.computer_count} />
+            <SummaryCard icon={Shield} label="Security groups" value={summary.group_count} />
           </div>
-        ) : (
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            fitView
-            className="bg-gray-950"
-          >
-            <Background color="#1f2937" gap={24} />
-            <Controls className="bg-gray-800 border-gray-700" />
-            <MiniMap className="bg-gray-800" nodeColor={n => n.style?.background as string ?? '#8b5cf6'} />
-          </ReactFlow>
         )}
-      </div>
+      </section>
 
-      {/* Sites table */}
-      {sites.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-800">
-            <h2 className="text-sm font-semibold text-white">Sites &amp; Services</h2>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs border-b border-gray-800">
-                <th className="px-4 py-2 text-left font-medium">Site</th>
-                <th className="px-4 py-2 text-left font-medium">Domain Controllers</th>
-                <th className="px-4 py-2 text-left font-medium">Subnets</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {sites.map((site: any, i: number) => (
-                <tr key={i} className="hover:bg-gray-800/50">
-                  <td className="px-4 py-2 text-white font-mono text-xs">{site.name}</td>
-                  <td className="px-4 py-2 text-gray-300 text-xs">{(site.dcs ?? []).join(', ') || '—'}</td>
-                  <td className="px-4 py-2 text-gray-400 text-xs">{(site.subnets ?? []).join(', ') || 'No subnets defined'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <section className="flex flex-wrap gap-3">
+        <RiskBadge
+          label={`Machine account quota: ${machineAccountQuota}`}
+          tone={machineAccountQuota > 0 ? 'danger' : 'success'}
+        />
+        <RiskBadge
+          label={`Recycle Bin: ${recycleBinEnabled ? 'enabled' : 'disabled'}`}
+          tone={recycleBinEnabled ? 'success' : 'warning'}
+        />
+        <RiskBadge
+          label={`Vulnerable ADCS templates: ${vulnerableTemplates}`}
+          tone={vulnerableTemplates > 0 ? 'danger' : 'neutral'}
+        />
+        <RiskBadge label={`Sites mapped: ${sites.length}`} tone="neutral" />
+      </section>
+
+      <section className="panel overflow-hidden">
+        <div className="border-b border-white/8 px-6 py-4">
+          <p className="label">Directory graph</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Forest and controller map</h3>
         </div>
+        <div className="h-[620px]">
+          {!snapshotId ? (
+            <div className="flex h-full items-center justify-center text-sm text-slate-500">No topology data available.</div>
+          ) : (
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              fitView
+              className="bg-[#06101d]"
+            >
+              <Background color="rgba(124, 154, 190, 0.12)" gap={24} />
+              <Controls className="!border-white/8 !bg-[#0b1628]" />
+              <MiniMap
+                className="!bg-[#0b1628]"
+                nodeColor={(node) => (typeof node.style?.background === 'string' ? node.style.background : '#1b2b40')}
+              />
+            </ReactFlow>
+          )}
+        </div>
+      </section>
+
+      {sites.length > 0 && (
+        <section className="panel overflow-hidden">
+          <div className="border-b border-white/8 px-6 py-4">
+            <p className="label">Site inventory</p>
+            <h3 className="mt-1 text-lg font-semibold text-white">Sites and controller distribution</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-white/8 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                <tr>
+                  <th className="px-6 py-3 font-medium">Site</th>
+                  <th className="px-6 py-3 font-medium">Controllers</th>
+                  <th className="px-6 py-3 font-medium">Subnets</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/6">
+                {sites.map((site: any, index: number) => (
+                  <tr key={`${site.name}-${index}`} className="hover:bg-white/[0.03]">
+                    <td className="px-6 py-4 font-medium text-white">{site.name}</td>
+                    <td className="px-6 py-4 text-slate-300">{(site.dcs ?? []).join(', ') || '—'}</td>
+                    <td className="px-6 py-4 text-slate-400">{(site.subnets ?? []).join(', ') || 'No subnets defined'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   )
 }
 
-// ============================================================
-// Graph builder
-// ============================================================
+function buildGraph(data: any): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = []
+  const edges: Edge[] = []
 
-function buildGraph(data: any): { newNodes: Node[]; newEdges: Edge[] } {
-  const newNodes: Node[] = []
-  const newEdges: Edge[] = []
-
-  const domain: string = data.domain ?? ''
-  const dcs: any[] = data.domain_controllers ?? []
+  const domain = data.domain
   const sites: any[] = data.sites ?? []
+  const dcs: any[] = data.domain_controllers ?? []
   const siteLinks: any[] = data.site_links ?? []
 
-  if (!domain) return { newNodes, newEdges }
+  if (!domain) return { nodes, edges }
 
-  // Domain node (center)
-  newNodes.push({
+  nodes.push({
     id: 'domain',
-    type: 'default',
-    position: { x: 380, y: 40 },
-    data: { label: `${domain}` },
+    position: { x: 440, y: 40 },
+    data: { label: domain },
     style: {
-      background: '#1e3a5f', color: 'white',
-      border: '2px solid #3b82f6', borderRadius: 10,
-      padding: '10px 20px', fontWeight: 600, fontSize: 13,
-      minWidth: 200, textAlign: 'center',
+      minWidth: 220,
+      padding: '14px 18px',
+      borderRadius: '18px',
+      color: '#f8fbff',
+      border: '1px solid rgba(78, 161, 255, 0.28)',
+      background: 'rgba(36, 82, 146, 0.62)',
+      textAlign: 'center',
+      fontWeight: 700,
+      fontSize: '13px',
     },
   })
 
-  // Site nodes
-  const siteX: Record<string, number> = {}
-  sites.forEach((site: any, i: number) => {
-    const x = 80 + i * 280
-    const y = 180
-    siteX[site.name] = x + 100
-    newNodes.push({
+  const sitePositions = new Map<string, { x: number; y: number }>()
+  sites.forEach((site: any, index: number) => {
+    const x = 120 + index * 280
+    const y = 210
+    sitePositions.set(site.name, { x, y })
+    nodes.push({
       id: `site:${site.name}`,
-      type: 'default',
       position: { x, y },
-      data: { label: `📍 ${site.name}\n${(site.dcs ?? []).length} DC(s)` },
+      data: { label: `${site.name}\n${(site.dcs ?? []).length} controller(s)` },
       style: {
-        background: '#1f2937', color: '#d1d5db',
-        border: '1px solid #4b5563', borderRadius: 8,
-        padding: '8px 14px', fontSize: 11, minWidth: 160,
+        minWidth: 180,
+        padding: '12px 14px',
+        borderRadius: '16px',
+        color: '#dbe7f7',
+        border: '1px solid rgba(124, 154, 190, 0.18)',
+        background: 'rgba(20, 34, 55, 0.92)',
+        fontSize: '11px',
+        lineHeight: 1.4,
+        textAlign: 'center',
       },
     })
-    newEdges.push({
-      id: `domain-site-${i}`,
+    edges.push({
+      id: `domain-site-${site.name}`,
       source: 'domain',
       target: `site:${site.name}`,
-      style: { stroke: '#4b5563', strokeDasharray: '4 2' },
+      style: { stroke: 'rgba(124, 154, 190, 0.4)', strokeDasharray: '6 3' },
     })
   })
 
-  // DC nodes
-  const dcsBySite: Record<string, string[]> = {}
-  sites.forEach((s: any) => {
-    (s.dcs ?? []).forEach((dc: string) => {
-      if (!dcsBySite[s.name]) dcsBySite[s.name] = []
-      dcsBySite[s.name].push(dc)
-    })
-  })
-
-  // DCs not in any site
-  const assignedDCs = new Set(Object.values(dcsBySite).flat())
-  const unassigned = dcs.filter(dc => !assignedDCs.has(dc.name))
-
-  dcs.forEach((dc: any, i: number) => {
-    const siteName = Object.keys(dcsBySite).find(s => dcsBySite[s].includes(dc.name))
-    const baseX = siteName && siteX[siteName] != null ? siteX[siteName] - 60 + (dcsBySite[siteName]?.indexOf(dc.name) ?? 0) * 130 : 200 + i * 150
-    const y = siteName ? 340 : 200
-    const isGC = dc.is_global_catalog
-    newNodes.push({
+  dcs.forEach((dc: any, index: number) => {
+    const site = sites.find((entry: any) => (entry.dcs ?? []).includes(dc.name))
+    const parent = site ? `site:${site.name}` : 'domain'
+    const position = sitePositions.get(site?.name ?? '')
+    const x = position ? position.x - 32 + ((site.dcs ?? []).indexOf(dc.name) || 0) * 110 : 180 + index * 130
+    const y = position ? 370 : 190
+    nodes.push({
       id: `dc:${dc.name}`,
-      type: 'default',
-      position: { x: baseX, y },
-      data: { label: `🖥 ${dc.name}${isGC ? ' (GC)' : ''}\n${dc.operating_system?.replace('Windows Server ', 'WS ') ?? ''}` },
+      position: { x, y },
+      data: { label: `${dc.name}\n${dc.operating_system ?? 'Domain Controller'}` },
       style: {
-        background: isGC ? '#1a2e1a' : '#1e1a2e', color: '#e5e7eb',
-        border: `1px solid ${isGC ? '#16a34a' : '#7c3aed'}`, borderRadius: 8,
-        padding: '6px 12px', fontSize: 10, minWidth: 140,
+        minWidth: 150,
+        padding: '10px 12px',
+        borderRadius: '14px',
+        color: '#ecf3ff',
+        border: `1px solid ${dc.is_global_catalog ? 'rgba(115, 224, 192, 0.28)' : 'rgba(78, 161, 255, 0.18)'}`,
+        background: dc.is_global_catalog ? 'rgba(18, 61, 57, 0.9)' : 'rgba(18, 31, 49, 0.94)',
+        fontSize: '10px',
+        lineHeight: 1.5,
+        textAlign: 'center',
       },
     })
-    const parent = siteName ? `site:${siteName}` : 'domain'
-    newEdges.push({
-      id: `${parent}-dc-${dc.name}`,
+    edges.push({
+      id: `${parent}-${dc.name}`,
       source: parent,
       target: `dc:${dc.name}`,
-      style: { stroke: isGC ? '#16a34a' : '#7c3aed', strokeWidth: 1.5 },
+      style: {
+        stroke: dc.is_global_catalog ? 'rgba(115, 224, 192, 0.55)' : 'rgba(78, 161, 255, 0.5)',
+        strokeWidth: 1.6,
+      },
     })
   })
 
-  // Site link edges
-  siteLinks.forEach((link: any, i: number) => {
-    const sites2: string[] = link.sites ?? []
-    for (let j = 0; j < sites2.length - 1; j++) {
-      newEdges.push({
-        id: `sitelink-${i}-${j}`,
-        source: `site:${sites2[j]}`,
-        target: `site:${sites2[j + 1]}`,
-        label: `${link.name} (cost: ${link.cost ?? '?'})`,
-        animated: false,
-        style: { stroke: '#f59e0b', strokeDasharray: '6 3' },
-        labelStyle: { fill: '#f59e0b', fontSize: 9 },
+  siteLinks.forEach((link: any, index: number) => {
+    const linkedSites: string[] = link.sites ?? []
+    for (let i = 0; i < linkedSites.length - 1; i += 1) {
+      edges.push({
+        id: `site-link-${index}-${i}`,
+        source: `site:${linkedSites[i]}`,
+        target: `site:${linkedSites[i + 1]}`,
+        label: `${link.name} · cost ${link.cost ?? '?'}`,
+        style: { stroke: 'rgba(244, 201, 107, 0.72)', strokeDasharray: '5 3' },
+        labelStyle: { fill: '#d8b56b', fontSize: 9 },
       })
     }
   })
 
-  return { newNodes, newEdges }
+  return { nodes, edges }
 }
 
-// ============================================================
-// Small UI components
-// ============================================================
-
-function SummaryCard({ icon: Icon, label, value, color }: { icon: any; label: string; value: number; color: string }) {
-  const colorMap: Record<string, string> = {
-    blue: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
-    violet: 'text-violet-400 bg-violet-500/10 border-violet-500/20',
-    emerald: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    amber: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-  }
+function SummaryCard({ icon: Icon, label, value }: { icon: typeof Server; label: string; value: number }) {
   return (
-    <div className={`rounded-xl border p-4 ${colorMap[color]}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className="w-4 h-4" />
-        <span className="text-xs text-gray-400">{label}</span>
+    <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/8 bg-white/[0.02] text-sky-200">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div>
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</p>
+          <p className="mt-1 text-2xl font-semibold text-white">{value}</p>
+        </div>
       </div>
-      <div className="text-2xl font-bold">{value}</div>
     </div>
   )
 }
 
-function RiskBadge({ label, bad = false, good = false, badText, goodText }: {
-  label: string; bad?: boolean; good?: boolean; badText?: string; goodText?: string;
+function RiskBadge({
+  label,
+  tone,
+}: {
+  label: string
+  tone: 'danger' | 'warning' | 'success' | 'neutral'
 }) {
-  if (good) {
-    return (
-      <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-        ✓ {goodText ? `${label}: ${goodText}` : label}
-      </span>
-    )
+  const styles: Record<string, string> = {
+    danger: 'border-red-400/18 bg-red-400/10 text-red-200',
+    warning: 'border-amber-400/18 bg-amber-400/10 text-amber-200',
+    success: 'border-emerald-400/18 bg-emerald-400/10 text-emerald-200',
+    neutral: 'border-white/8 bg-white/[0.03] text-slate-300',
   }
-  if (bad) {
-    return (
-      <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/20">
-        <AlertTriangle className="w-3 h-3" />
-        {badText ? `${label}: ${badText}` : label}
-      </span>
-    )
-  }
-  return null
+
+  return (
+    <span className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium ${styles[tone]}`}>
+      {tone === 'danger' ? <AlertTriangle className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+      {label}
+    </span>
+  )
 }

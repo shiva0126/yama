@@ -1,21 +1,27 @@
-import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import clsx from 'clsx'
+import {
+  Download,
+  Loader2,
+  Network,
+  Server,
+  Trash2,
+  Wifi,
+  WifiOff,
+  X,
+} from 'lucide-react'
 import { agentsApi } from '../../api'
 import type { InstallJob, InstallRequest } from '../../types'
-import {
-  Server, Plus, Trash2, Wifi, WifiOff, Download,
-  Loader2, CheckCircle2, XCircle, X, ChevronRight,
-} from 'lucide-react'
-import clsx from 'clsx'
 
 export function Agents() {
-  const [showInstall, setShowInstall] = useState(false)
   const qc = useQueryClient()
+  const [showInstall, setShowInstall] = useState(false)
 
   const { data: agentsData, isLoading } = useQuery({
     queryKey: ['agents'],
-    queryFn: () => agentsApi.list().then(r => r.data),
-    refetchInterval: 10_000,
+    queryFn: () => agentsApi.list().then((r) => r.data),
+    refetchInterval: 10000,
   })
 
   const deleteAgent = useMutation({
@@ -24,106 +30,102 @@ export function Agents() {
   })
 
   const agents = agentsData?.agents ?? []
+  const online = agents.filter((agent) => agent.status === 'online').length
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Agents</h1>
-          <p className="text-gray-400 text-sm mt-1">
-            Manage collector agents deployed on domain-joined Windows machines
-          </p>
+      <section className="panel-strong p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="label">Agent fleet</p>
+            <h2 className="mt-2 text-2xl font-semibold text-white">Collectors</h2>
+          </div>
+          <button onClick={() => setShowInstall(true)} className="btn-primary">
+            <Download className="h-4 w-4" />
+            Install collector
+          </button>
         </div>
-        <button
-          onClick={() => setShowInstall(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          <Download className="w-4 h-4" />
-          Install Agent
-        </button>
-      </div>
 
-      {/* Agent list */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-300">Registered Agents</h2>
-          <span className="text-xs text-gray-500">{agents.length} agent{agents.length !== 1 ? 's' : ''}</span>
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <FleetMetric label="Registered collectors" value={agents.length} />
+          <FleetMetric label="Online collectors" value={online} />
+          <FleetMetric label="Offline collectors" value={agents.length - online} />
+        </div>
+      </section>
+
+      <section className="panel overflow-hidden">
+        <div className="border-b border-white/8 px-6 py-4">
+          <p className="label">Collector inventory</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Current registered agents</h3>
         </div>
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 text-violet-400 animate-spin" />
-          </div>
+          <div className="px-6 py-12 text-center text-sm text-slate-500">Loading collector fleet…</div>
         ) : agents.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center px-6">
-            <Server className="w-10 h-10 text-gray-700 mb-3" />
-            <p className="text-gray-400 font-medium">No agents registered</p>
-            <p className="text-gray-600 text-sm mt-1">
-              Click <span className="text-violet-400">Install Agent</span> to deploy one on a domain-joined Windows machine.
-            </p>
+          <div className="px-6 py-14 text-center">
+            <Server className="mx-auto h-10 w-10 text-slate-600" />
+            <p className="mt-4 text-sm font-medium text-slate-300">No collectors registered yet.</p>
+            <p className="mt-2 text-sm text-slate-500">Deploy a domain-joined collector to start assessment operations.</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-800">
-            {agents.map(agent => (
-              <div key={agent.id} className="flex items-center gap-4 px-6 py-4 hover:bg-gray-800/40 transition-colors">
-                <div className={clsx(
-                  'flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center',
-                  agent.status === 'online' ? 'bg-emerald-500/15' : 'bg-gray-800',
-                )}>
-                  {agent.status === 'online'
-                    ? <Wifi className="w-4 h-4 text-emerald-400" />
-                    : <WifiOff className="w-4 h-4 text-gray-500" />
-                  }
+          <div className="divide-y divide-white/6">
+            {agents.map((agent) => (
+              <div key={agent.id} className="flex flex-wrap items-center gap-4 px-6 py-4">
+                <div
+                  className={clsx(
+                    'flex h-10 w-10 items-center justify-center rounded-xl border',
+                    agent.status === 'online'
+                      ? 'border-emerald-400/18 bg-emerald-400/10 text-emerald-300'
+                      : 'border-slate-500/16 bg-slate-500/10 text-slate-400'
+                  )}
+                >
+                  {agent.status === 'online' ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
                 </div>
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-white">{agent.name}</p>
-                    <StatusBadge status={agent.status} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-white">{agent.name}</p>
+                    <span
+                      className={clsx(
+                        'chip capitalize',
+                        agent.status === 'online'
+                          ? 'border-emerald-400/18 bg-emerald-400/10 text-emerald-300'
+                          : agent.status === 'busy'
+                            ? 'border-sky-400/18 bg-sky-400/10 text-sky-200'
+                            : 'border-slate-500/20 bg-slate-500/10 text-slate-400'
+                      )}
+                    >
+                      {agent.status}
+                    </span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="mt-1 text-xs text-slate-500">
                     {agent.hostname} · {agent.ip_address} · {agent.domain}
                   </p>
                 </div>
 
-                <div className="text-right hidden md:block">
-                  <p className="text-xs text-gray-500">v{agent.version || '—'}</p>
-                  <p className="text-xs text-gray-600 mt-0.5">
-                    {agent.last_seen ? `Seen ${new Date(agent.last_seen).toLocaleTimeString()}` : 'Never seen'}
+                <div className="min-w-[180px] text-sm text-slate-400">
+                  <p>Version {agent.version || '—'}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {agent.last_seen ? `Last seen ${new Date(agent.last_seen).toLocaleString()}` : 'No heartbeat yet'}
                   </p>
                 </div>
 
                 <button
                   onClick={() => deleteAgent.mutate(agent.id)}
-                  className="p-1.5 text-gray-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
-                  title="Remove agent"
+                  className="btn-secondary px-3 py-2 text-red-200 hover:text-red-100"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* How to manually register */}
-      <ManualRegisterPanel />
-
-      {showInstall && (
-        <InstallModal
-          onClose={() => {
-            setShowInstall(false)
-            qc.invalidateQueries({ queryKey: ['agents'] })
-          }}
-        />
-      )}
+      {showInstall && <InstallModal onClose={() => setShowInstall(false)} />}
     </div>
   )
 }
-
-// ============================================================
-// Install Modal
-// ============================================================
 
 function InstallModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
@@ -138,205 +140,106 @@ function InstallModal({ onClose }: { onClose: () => void }) {
   })
   const [jobId, setJobId] = useState<string | null>(null)
   const [job, setJob] = useState<InstallJob | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const install = useMutation({
-    mutationFn: () => agentsApi.install(form).then(r => r.data),
-    onSuccess: (data) => {
-      setJobId(data.job_id)
-    },
+    mutationFn: () => agentsApi.install(form).then((r) => r.data),
+    onSuccess: (payload) => setJobId(payload.job_id),
   })
 
-  // Poll job status once we have a job ID
   useEffect(() => {
     if (!jobId) return
-    pollRef.current = setInterval(async () => {
+    const timer = setInterval(async () => {
       try {
-        const res = await agentsApi.getInstallStatus(jobId)
-        setJob(res.data)
-        if (res.data.status === 'completed' || res.data.status === 'failed') {
-          clearInterval(pollRef.current!)
-          if (res.data.status === 'completed') {
-            qc.invalidateQueries({ queryKey: ['agents'] })
-          }
+        const response = await agentsApi.getInstallStatus(jobId)
+        setJob(response.data)
+        if (response.data.status === 'completed' || response.data.status === 'failed') {
+          clearInterval(timer)
+          qc.invalidateQueries({ queryKey: ['agents'] })
         }
-      } catch {}
+      } catch {
+        clearInterval(timer)
+      }
     }, 2000)
-    return () => clearInterval(pollRef.current!)
+
+    return () => clearInterval(timer)
   }, [jobId, qc])
 
-  const set = (k: keyof InstallRequest, v: string | number) =>
-    setForm(f => ({ ...f, [k]: v }))
-
-  const isRunning = install.isPending || (job && job.status === 'running' || job?.status === 'pending')
-  const isDone = job?.status === 'completed' || job?.status === 'failed'
+  const updateField = (key: keyof InstallRequest, value: string | number) => {
+    setForm((prev) => ({ ...prev, [key]: value }))
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-800">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-violet-500/15 rounded-lg flex items-center justify-center">
-              <Download className="w-4 h-4 text-violet-400" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-white">Install Collector Agent</h2>
-              <p className="text-xs text-gray-500">Deploy via SSH to a domain-joined Windows machine</p>
-            </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="panel-strong w-full max-w-2xl">
+        <div className="flex items-center justify-between border-b border-white/8 px-6 py-5">
+          <div>
+            <p className="label">Collector installation</p>
+            <h3 className="mt-1 text-lg font-semibold text-white">Deploy a new Windows collector over SSH</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 text-gray-500 hover:text-white transition-colors rounded">
-            <X className="w-4 h-4" />
+          <button onClick={onClose} className="btn-secondary px-3 py-2">
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-4">
+        <div className="space-y-5 px-6 py-6">
           {!jobId ? (
             <>
-              {/* Form */}
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Target IP / Hostname" required>
-                  <input
-                    value={form.target_ip}
-                    onChange={e => set('target_ip', e.target.value)}
-                    placeholder="192.168.1.10"
-                    className="input"
-                  />
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Target IP or hostname">
+                  <input value={form.target_ip} onChange={(e) => updateField('target_ip', e.target.value)} className="input" />
                 </Field>
-                <Field label="Agent Name" required>
-                  <input
-                    value={form.agent_name}
-                    onChange={e => set('agent_name', e.target.value)}
-                    placeholder="DC01-Collector"
-                    className="input"
-                  />
+                <Field label="Agent name">
+                  <input value={form.agent_name} onChange={(e) => updateField('agent_name', e.target.value)} className="input" />
                 </Field>
-                <Field label="Windows Username" required>
-                  <input
-                    value={form.username}
-                    onChange={e => set('username', e.target.value)}
-                    placeholder="Administrator"
-                    autoComplete="off"
-                    className="input"
-                  />
+                <Field label="Windows username">
+                  <input value={form.username} onChange={(e) => updateField('username', e.target.value)} className="input" />
                 </Field>
-                <Field label="Password" required>
-                  <input
-                    type="password"
-                    value={form.password}
-                    onChange={e => set('password', e.target.value)}
-                    autoComplete="new-password"
-                    className="input"
-                  />
+                <Field label="Password">
+                  <input type="password" value={form.password} onChange={(e) => updateField('password', e.target.value)} className="input" />
                 </Field>
-                <Field label="AD Domain" required>
-                  <input
-                    value={form.domain}
-                    onChange={e => set('domain', e.target.value)}
-                    placeholder="corp.example.com"
-                    className="input"
-                  />
+                <Field label="Directory domain">
+                  <input value={form.domain} onChange={(e) => updateField('domain', e.target.value)} className="input" />
                 </Field>
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="SSH Port">
-                    <input
-                      type="number"
-                      value={form.ssh_port}
-                      onChange={e => set('ssh_port', Number(e.target.value))}
-                      className="input"
-                    />
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="SSH port">
+                    <input type="number" value={form.ssh_port} onChange={(e) => updateField('ssh_port', Number(e.target.value))} className="input" />
                   </Field>
-                  <Field label="Agent Port">
-                    <input
-                      type="number"
-                      value={form.agent_port}
-                      onChange={e => set('agent_port', Number(e.target.value))}
-                      className="input"
-                    />
+                  <Field label="Agent port">
+                    <input type="number" value={form.agent_port} onChange={(e) => updateField('agent_port', Number(e.target.value))} className="input" />
                   </Field>
                 </div>
               </div>
 
-              <div className="bg-amber-500/10 border border-amber-500/25 rounded-lg px-4 py-3 text-xs text-amber-300 space-y-1">
-                <p className="font-medium">Prerequisites</p>
-                <ul className="list-disc list-inside space-y-0.5 text-amber-400/80">
-                  <li>OpenSSH server enabled on the target machine</li>
-                  <li>Agent binary built: <code className="font-mono">make build-agent</code></li>
-                  <li>TCP {form.agent_port} open in Windows Firewall after install</li>
-                </ul>
+              <div className="rounded-2xl border border-amber-400/18 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+                Use a domain-joined Windows host with reachable SSH and credentials that can install the service.
               </div>
 
-              {install.isError && (
-                <p className="text-sm text-red-400">
-                  {(install.error as any)?.response?.data?.error ?? 'Failed to start installation'}
-                </p>
-              )}
-
-              <button
-                disabled={!form.target_ip || !form.username || !form.password || !form.domain || !form.agent_name}
-                onClick={() => install.mutate()}
-                className={clsx(
-                  'w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                  form.target_ip && form.username && form.password && form.domain && form.agent_name
-                    ? 'bg-violet-600 hover:bg-violet-500 text-white'
-                    : 'bg-gray-800 text-gray-500 cursor-not-allowed',
-                )}
-              >
-                {install.isPending
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting installation...</>
-                  : <><Download className="w-4 h-4" /> Install Agent</>
-                }
-              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={() => install.mutate()} disabled={install.isPending} className="btn-primary">
+                  {install.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  Start installation
+                </button>
+                <button onClick={onClose} className="btn-secondary">
+                  Cancel
+                </button>
+              </div>
             </>
           ) : (
-            /* Progress view */
-            <div className="space-y-5">
-              <ProgressBar progress={job?.progress ?? 0} status={job?.status ?? 'pending'} />
-
-              <div className="space-y-2">
-                <StepLog job={job} />
+            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-5">
+              <p className="label">Install job</p>
+              <h4 className="mt-2 text-lg font-semibold text-white">{job?.agent_name || form.agent_name}</h4>
+              <p className="mt-2 text-sm text-slate-400">{job?.message || 'Waiting for installer status…'}</p>
+              <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-900/80">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-300"
+                  style={{ width: `${job?.progress ?? 12}%` }}
+                />
               </div>
-
-              {job?.status === 'completed' && (
-                <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg px-4 py-3 text-sm text-emerald-300 flex items-start gap-3">
-                  <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium">Agent installed successfully</p>
-                    <p className="text-emerald-400/70 text-xs mt-0.5">
-                      The agent is running and has been registered. You can now start scans.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {job?.status === 'failed' && (
-                <div className="bg-red-500/10 border border-red-500/25 rounded-lg px-4 py-3 text-sm text-red-300 flex items-start gap-3">
-                  <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium">Installation failed</p>
-                    <p className="text-red-400/70 text-xs mt-1">{job.error}</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                {isDone && (
-                  <button
-                    onClick={onClose}
-                    className="flex-1 py-2.5 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium rounded-lg transition-colors"
-                  >
-                    Done
-                  </button>
-                )}
-                {job?.status === 'failed' && (
-                  <button
-                    onClick={() => { setJobId(null); setJob(null) }}
-                    className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-lg transition-colors"
-                  >
-                    Try Again
-                  </button>
-                )}
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <span className="capitalize text-slate-300">{job?.status || 'pending'}</span>
+                <span className="text-slate-500">{job?.progress ?? 0}%</span>
               </div>
+              {job?.error && <p className="mt-3 text-sm text-red-300">{job.error}</p>}
             </div>
           )}
         </div>
@@ -345,197 +248,20 @@ function InstallModal({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ============================================================
-// Sub-components
-// ============================================================
-
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div>
-      <label className="text-xs text-gray-400 mb-1.5 block">
-        {label}{required && <span className="text-red-400 ml-0.5">*</span>}
-      </label>
-      {children}
-    </div>
+    <label className="block">
+      <span className="label">{label}</span>
+      <div className="mt-2">{children}</div>
+    </label>
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    online:  'bg-emerald-500/15 text-emerald-400',
-    offline: 'bg-gray-800 text-gray-500',
-    busy:    'bg-amber-500/15 text-amber-400',
-  }
+function FleetMetric({ label, value }: { label: string; value: number }) {
   return (
-    <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium', map[status] ?? 'bg-gray-800 text-gray-500')}>
-      {status}
-    </span>
-  )
-}
-
-function ProgressBar({ progress, status }: { progress: number; status: string }) {
-  const color = status === 'completed' ? 'bg-emerald-500'
-    : status === 'failed' ? 'bg-red-500'
-    : 'bg-violet-500'
-
-  return (
-    <div>
-      <div className="flex justify-between text-xs text-gray-400 mb-1.5">
-        <span>Installation progress</span>
-        <span>{progress}%</span>
-      </div>
-      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-        <div
-          className={clsx('h-full rounded-full transition-all duration-500', color,
-            status === 'running' && progress < 100 ? 'animate-pulse' : ''
-          )}
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-    </div>
-  )
-}
-
-const STEPS = [
-  { at: 5,  label: 'Locating agent binary' },
-  { at: 10, label: 'Connecting via SSH' },
-  { at: 20, label: 'Creating installation directory' },
-  { at: 35, label: 'Uploading agent binary' },
-  { at: 65, label: 'Removing previous installation' },
-  { at: 70, label: 'Installing Windows service' },
-  { at: 80, label: 'Starting service' },
-  { at: 88, label: 'Waiting for agent to come online' },
-  { at: 95, label: 'Registering agent' },
-  { at: 100, label: 'Complete' },
-]
-
-function StepLog({ job }: { job: InstallJob | null }) {
-  if (!job) return null
-  const progress = job.progress
-
-  return (
-    <div className="space-y-1">
-      {STEPS.map(step => {
-        const done = progress > step.at || (job.status === 'completed' && progress >= step.at)
-        const active = job.status === 'running' && progress >= step.at &&
-          (STEPS.find(s => s.at > step.at)?.at ?? 101) > progress
-        const failed = job.status === 'failed' && active
-
-        return (
-          <div key={step.at} className={clsx(
-            'flex items-center gap-2.5 text-xs py-1',
-            done ? 'text-gray-400' : active ? 'text-white' : 'text-gray-600',
-          )}>
-            {done && !active ? (
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-            ) : active && !failed ? (
-              <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin flex-shrink-0" />
-            ) : failed ? (
-              <XCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
-            ) : (
-              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
-            )}
-            {step.label}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function ManualRegisterPanel() {
-  const [open, setOpen] = useState(false)
-  const qc = useQueryClient()
-  const emptyForm = { name: '', hostname: '', domain: '', ip_address: '', dc_username: '', dc_password: '' }
-  const [form, setForm] = useState(emptyForm)
-  const [result, setResult] = useState<{ api_key: string } | null>(null)
-
-  const register = useMutation({
-    mutationFn: () => agentsApi.register(form).then(r => r.data),
-    onSuccess: (data) => {
-      setResult(data)
-      qc.invalidateQueries({ queryKey: ['agents'] })
-    },
-  })
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-300 transition-colors"
-      >
-        <Plus className="w-4 h-4" />
-        Add Domain Target (LDAP)
-      </button>
-    )
-  }
-
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-300">Add Domain Target</h3>
-          <p className="text-xs text-gray-500 mt-0.5">Connects via LDAP port 389 — no agent or firewall changes needed</p>
-        </div>
-        <button onClick={() => setOpen(false)} className="text-gray-600 hover:text-gray-400">
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {result ? (
-        <div className="space-y-3">
-          <div className="bg-emerald-500/10 border border-emerald-500/25 rounded-lg px-4 py-3 text-sm text-emerald-300">
-            <p className="font-medium">Domain target registered successfully</p>
-            <p className="text-xs text-emerald-400/70 mt-1">Go to Scanner to start a security assessment.</p>
-          </div>
-          <button
-            onClick={() => { setResult(null); setForm(emptyForm) }}
-            className="text-sm text-gray-400 hover:text-white transition-colors"
-          >
-            Add another
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Name <span className="text-red-400">*</span></label>
-              <input value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="DC01" className="input" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">DC IP Address <span className="text-red-400">*</span></label>
-              <input value={form.ip_address} onChange={e => setForm(f => ({...f, ip_address: e.target.value}))} placeholder="172.16.242.57" className="input" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Domain (FQDN) <span className="text-red-400">*</span></label>
-              <input value={form.domain} onChange={e => setForm(f => ({...f, domain: e.target.value, hostname: 'dc01.'+e.target.value}))} placeholder="corp.local" className="input" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Hostname</label>
-              <input value={form.hostname} onChange={e => setForm(f => ({...f, hostname: e.target.value}))} placeholder="dc01.corp.local" className="input" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Domain Username <span className="text-red-400">*</span></label>
-              <input value={form.dc_username} onChange={e => setForm(f => ({...f, dc_username: e.target.value}))} placeholder="administrator" autoComplete="off" className="input" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Password <span className="text-red-400">*</span></label>
-              <input type="password" value={form.dc_password} onChange={e => setForm(f => ({...f, dc_password: e.target.value}))} autoComplete="new-password" className="input" />
-            </div>
-          </div>
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2 text-xs text-blue-300">
-            Any domain user account works — read-only access is sufficient for all security checks.
-          </div>
-          <button
-            disabled={!form.name || !form.ip_address || !form.domain || !form.dc_username || !form.dc_password || register.isPending}
-            onClick={() => register.mutate()}
-            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-sm text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {register.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-            Register Domain Target
-          </button>
-        </>
-      )}
+    <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
     </div>
   )
 }

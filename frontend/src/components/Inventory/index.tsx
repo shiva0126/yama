@@ -1,22 +1,22 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { inventoryApi, scansApi } from '../../api'
-import { Users, Layers, Monitor, FileCode, Server } from 'lucide-react'
-import { UsersTable } from './UsersTable'
-import { GroupsTable } from './GroupsTable'
-import { ComputersTable } from './ComputersTable'
-import { GPOsTable } from './GPOsTable'
-import { DCsTable } from './DCsTable'
+import { Boxes, FileCode2, Monitor, Server, Shield, Users } from 'lucide-react'
 import clsx from 'clsx'
+import { scansApi } from '../../api'
+import { ComputersTable } from './ComputersTable'
+import { DCsTable } from './DCsTable'
+import { GPOsTable } from './GPOsTable'
+import { GroupsTable } from './GroupsTable'
+import { UsersTable } from './UsersTable'
 
 type Tab = 'users' | 'groups' | 'computers' | 'gpos' | 'dcs'
 
-const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
-  { id: 'users',     label: 'Users',       icon: Users },
-  { id: 'groups',    label: 'Groups',      icon: Layers },
-  { id: 'computers', label: 'Computers',   icon: Monitor },
-  { id: 'gpos',      label: 'GPOs',        icon: FileCode },
-  { id: 'dcs',       label: 'Domain Controllers', icon: Server },
+const tabs: { id: Tab; label: string; icon: typeof Users; note: string }[] = [
+  { id: 'users', label: 'Identities', icon: Users, note: 'Users, privilege, service accounts' },
+  { id: 'groups', label: 'Groups', icon: Shield, note: 'Privilege containers and nesting' },
+  { id: 'computers', label: 'Assets', icon: Monitor, note: 'Workstations, servers, stale systems' },
+  { id: 'gpos', label: 'Policies', icon: FileCode2, note: 'GPO posture and exposure' },
+  { id: 'dcs', label: 'Controllers', icon: Server, note: 'Domain controller security state' },
 ]
 
 export function Inventory() {
@@ -25,66 +25,101 @@ export function Inventory() {
 
   const { data: scansData } = useQuery({
     queryKey: ['scans'],
-    queryFn: () => scansApi.list().then(r => r.data),
+    queryFn: () => scansApi.list().then((r) => r.data),
   })
 
-  const completedScans = scansData?.scans?.filter(s => s.status === 'completed') ?? []
+  const completedScans = scansData?.scans?.filter((scan) => scan.status === 'completed') ?? []
   const snapshotId = selectedSnapshot || completedScans[0]?.snapshot_id || ''
+  const currentRun = completedScans.find((scan) => scan.snapshot_id === snapshotId) ?? completedScans[0]
+
+  const summary = useMemo(
+    () => [
+      { label: 'Protection index', value: currentRun?.overall_score ?? '—' },
+      { label: 'Critical findings', value: currentRun?.critical_count ?? 0 },
+      { label: 'Total findings', value: currentRun?.total_findings ?? 0 },
+      { label: 'Assessment date', value: currentRun?.completed_at ? new Date(currentRun.completed_at).toLocaleDateString() : '—' },
+    ],
+    [currentRun]
+  )
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Inventory</h1>
-          <p className="text-gray-400 text-sm mt-1">Browse all AD objects from latest scan</p>
+    <div className="space-y-6">
+      <section className="panel-strong p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="label">Directory intelligence</p>
+            <h2 className="mt-2 text-2xl font-semibold text-white">Directory state</h2>
+          </div>
+
+          {completedScans.length > 0 && (
+            <div className="min-w-[280px]">
+              <label className="label">Assessment snapshot</label>
+              <select value={selectedSnapshot} onChange={(e) => setSelectedSnapshot(e.target.value)} className="select mt-2">
+                {completedScans.map((scan) => (
+                  <option key={scan.snapshot_id} value={scan.snapshot_id ?? ''}>
+                    {scan.domain} · {scan.completed_at ? new Date(scan.completed_at).toLocaleDateString() : 'Pending'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
-        {completedScans.length > 0 && (
-          <select
-            value={selectedSnapshot}
-            onChange={e => setSelectedSnapshot(e.target.value)}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-violet-500 focus:outline-none"
-          >
-            {completedScans.map(s => (
-              <option key={s.snapshot_id} value={s.snapshot_id ?? ''}>
-                {s.domain} — {new Date(s.completed_at!).toLocaleDateString()}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {summary.map((item) => (
+            <div key={item.label} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{item.label}</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{item.value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setActiveTab(id)}
-            className={clsx(
-              'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-              activeTab === id
-                ? 'bg-violet-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-800'
-            )}
-          >
-            <Icon className="w-4 h-4" />
-            {label}
-          </button>
-        ))}
-      </div>
+      <section className="panel p-3">
+        <div className="grid gap-2 xl:grid-cols-5">
+          {tabs.map(({ id, label, icon: Icon, note }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={clsx(
+                'flex items-start gap-3 rounded-2xl border p-4 text-left transition',
+                activeTab === id
+                  ? 'border-sky-400/22 bg-sky-400/10'
+                  : 'border-transparent bg-transparent hover:border-white/8 hover:bg-white/[0.03]'
+              )}
+            >
+              <div
+                className={clsx(
+                  'flex h-10 w-10 items-center justify-center rounded-xl border',
+                  activeTab === id
+                    ? 'border-sky-400/18 bg-sky-400/10 text-sky-200'
+                    : 'border-white/8 bg-white/[0.03] text-slate-500'
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white">{label}</p>
+                <p className="mt-1 text-xs text-slate-500">{note}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
 
       {!snapshotId ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
-          <p className="text-gray-400">Run a scan to populate the inventory.</p>
+        <div className="panel p-12 text-center">
+          <Boxes className="mx-auto h-10 w-10 text-slate-600" />
+          <p className="mt-4 text-sm font-medium text-slate-300">No assessment data available.</p>
         </div>
       ) : (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          {activeTab === 'users'     && <UsersTable     snapshotId={snapshotId} />}
-          {activeTab === 'groups'    && <GroupsTable    snapshotId={snapshotId} />}
+        <section className="panel overflow-hidden">
+          {activeTab === 'users' && <UsersTable snapshotId={snapshotId} />}
+          {activeTab === 'groups' && <GroupsTable snapshotId={snapshotId} />}
           {activeTab === 'computers' && <ComputersTable snapshotId={snapshotId} />}
-          {activeTab === 'gpos'      && <GPOsTable      snapshotId={snapshotId} />}
-          {activeTab === 'dcs'       && <DCsTable       snapshotId={snapshotId} />}
-        </div>
+          {activeTab === 'gpos' && <GPOsTable snapshotId={snapshotId} />}
+          {activeTab === 'dcs' && <DCsTable snapshotId={snapshotId} />}
+        </section>
       )}
     </div>
   )

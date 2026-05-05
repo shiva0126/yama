@@ -1,244 +1,228 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { scansApi, reportsApi } from '../../api'
-import { FileText, Download, Loader2, FileJson, FileCode, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
+import { CheckCircle2, Download, FileCode2, FileJson2, FileText, Loader2, RefreshCw } from 'lucide-react'
+import { reportsApi, scansApi } from '../../api'
 
-const FORMAT_INFO = {
-  html: { label: 'HTML', icon: FileCode, desc: 'Interactive report for browser viewing' },
-  pdf:  { label: 'PDF',  icon: FileText, desc: 'Print-ready formatted document' },
-  json: { label: 'JSON', icon: FileJson, desc: 'Machine-readable structured data' },
+const formatInfo = {
+  html: {
+    label: 'HTML',
+    icon: FileCode2,
+    description: 'Browser report.',
+  },
+  pdf: {
+    label: 'PDF',
+    icon: FileText,
+    description: 'Portable document.',
+  },
+  json: {
+    label: 'JSON',
+    icon: FileJson2,
+    description: 'Structured export.',
+  },
 } as const
 
 export function Reports() {
   const qc = useQueryClient()
   const [selectedScan, setSelectedScan] = useState('')
   const [format, setFormat] = useState<'html' | 'pdf' | 'json'>('html')
-  const [generating, setGenerating] = useState(false)
 
   const { data: scansData } = useQuery({
     queryKey: ['scans'],
-    queryFn: () => scansApi.list().then(r => r.data),
+    queryFn: () => scansApi.list().then((r) => r.data),
   })
 
-  const { data: reportsData, isLoading: reportsLoading } = useQuery({
+  const { data: reportsData, isLoading } = useQuery({
     queryKey: ['reports'],
-    queryFn: () => reportsApi.list().then(r => r.data),
-    refetchInterval: 10_000,
+    queryFn: () => reportsApi.list().then((r) => r.data),
+    refetchInterval: 10000,
   })
 
-  const completedScans = scansData?.scans?.filter(s => s.status === 'completed') ?? []
-  const reports: any[] = reportsData?.reports ?? []
+  const completedScans = scansData?.scans?.filter((scan) => scan.status === 'completed') ?? []
+  const reports = reportsData?.reports ?? []
+  const selectedScanObject = completedScans.find((scan) => scan.id === selectedScan)
 
   const generate = useMutation({
-    mutationFn: () => reportsApi.generate(selectedScan, format).then(r => r.data),
-    onMutate: () => setGenerating(true),
-    onSuccess: async (data: { id: string }) => {
+    mutationFn: () => reportsApi.generate(selectedScan, format).then((r) => r.data),
+    onSuccess: async (payload: { id: string }) => {
       qc.invalidateQueries({ queryKey: ['reports'] })
-      const resp = await reportsApi.download(data.id)
-      const mimeTypes = { json: 'application/json', html: 'text/html', pdf: 'application/pdf' }
-      const blob = new Blob([resp.data], { type: mimeTypes[format] })
+      const response = await reportsApi.download(payload.id)
+      const blob = new Blob([response.data], {
+        type:
+          format === 'json'
+            ? 'application/json'
+            : format === 'pdf'
+              ? 'application/pdf'
+              : 'text/html',
+      })
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `ad-assessment-${selectedScan.slice(0, 8)}.${format}`
-      a.click()
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `yama-report-${selectedScan.slice(0, 8)}.${format}`
+      link.click()
       URL.revokeObjectURL(url)
     },
-    onSettled: () => setGenerating(false),
   })
 
-  const downloadReport = async (id: string, fmt: string) => {
-    const resp = await reportsApi.download(id)
-    const mimeTypes: Record<string, string> = { json: 'application/json', html: 'text/html', pdf: 'application/pdf' }
-    const blob = new Blob([resp.data], { type: mimeTypes[fmt] ?? 'application/octet-stream' })
+  const downloadReport = async (id: string, exportFormat: 'html' | 'pdf' | 'json') => {
+    const response = await reportsApi.download(id)
+    const blob = new Blob([response.data], {
+      type:
+        exportFormat === 'json'
+          ? 'application/json'
+          : exportFormat === 'pdf'
+            ? 'application/pdf'
+            : 'text/html',
+    })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `report-${id.slice(0, 8)}.${fmt}`
-    a.click()
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `yama-report-${id.slice(0, 8)}.${exportFormat}`
+    link.click()
     URL.revokeObjectURL(url)
   }
 
-  const selectedScanObj = completedScans.find(s => s.id === selectedScan)
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Reports</h1>
-          <p className="text-gray-400 text-sm mt-1">Generate and download AD assessment reports</p>
-        </div>
-        <span className="text-xs text-gray-500">{reports.length} report{reports.length !== 1 ? 's' : ''} generated</span>
-      </div>
+      <section className="panel-strong p-6">
+        <p className="label">Reporting</p>
+        <h2 className="mt-2 text-2xl font-semibold text-white">Exports</h2>
+      </section>
 
-      <div className="grid grid-cols-3 gap-6">
-        {/* Generator panel */}
-        <div className="col-span-1 space-y-5">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-5">
-            <h2 className="text-sm font-semibold text-gray-300">Generate Report</h2>
+      <section className="grid gap-6 2xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="panel p-6">
+          <p className="label">Generate report</p>
+          <h3 className="mt-2 text-lg font-semibold text-white">Run and format</h3>
 
-            {/* Scan selector */}
+          <div className="mt-5 space-y-5">
             <div>
-              <label className="text-xs text-gray-400 mb-1.5 block">Select Scan</label>
-              {completedScans.length === 0 ? (
-                <p className="text-sm text-gray-500">No completed scans available.</p>
-              ) : (
-                <select
-                  value={selectedScan}
-                  onChange={e => setSelectedScan(e.target.value)}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-violet-500 focus:outline-none"
-                >
-                  <option value="">Choose a scan...</option>
-                  {completedScans.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.domain} — {new Date(s.completed_at!).toLocaleDateString()} — Score: {s.overall_score ?? '—'}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <label className="label">Assessment run</label>
+              <select value={selectedScan} onChange={(e) => setSelectedScan(e.target.value)} className="select mt-2">
+                <option value="">Select completed run</option>
+                {completedScans.map((scan) => (
+                  <option key={scan.id} value={scan.id}>
+                    {scan.domain} · {scan.completed_at ? new Date(scan.completed_at).toLocaleDateString() : 'Pending'}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {/* Scan summary */}
-            {selectedScanObj && (
-              <div className="bg-gray-800/50 rounded-lg p-3 space-y-1 text-xs">
-                <div className="flex justify-between text-gray-400">
-                  <span>Domain</span><span className="text-white font-mono">{selectedScanObj.domain}</span>
-                </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>Score</span>
-                  <span className={clsx('font-bold', (selectedScanObj.overall_score ?? 0) >= 80 ? 'text-emerald-400' : (selectedScanObj.overall_score ?? 0) >= 60 ? 'text-amber-400' : 'text-red-400')}>
-                    {selectedScanObj.overall_score ?? '—'}
-                  </span>
-                </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>Findings</span><span className="text-white">{selectedScanObj.total_findings}</span>
-                </div>
-                <div className="flex justify-between text-gray-400">
-                  <span>Critical</span><span className="text-red-400 font-medium">{selectedScanObj.critical_count}</span>
+            {selectedScanObject && (
+              <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <InfoLine label="Domain" value={selectedScanObject.domain} />
+                  <InfoLine label="Protection index" value={selectedScanObject.overall_score ?? '—'} />
+                  <InfoLine label="Critical findings" value={selectedScanObject.critical_count} />
+                  <InfoLine label="Total findings" value={selectedScanObject.total_findings} />
                 </div>
               </div>
             )}
 
-            {/* Format picker */}
             <div>
-              <label className="text-xs text-gray-400 mb-2 block">Output Format</label>
-              <div className="space-y-2">
-                {(Object.entries(FORMAT_INFO) as [string, typeof FORMAT_INFO[keyof typeof FORMAT_INFO]][]).map(([key, info]) => {
-                  const Icon = info.icon
-                  const isSelected = format === key
-                  return (
-                    <button
-                      key={key}
-                      onClick={() => setFormat(key as 'html' | 'pdf' | 'json')}
-                      className={clsx(
-                        'w-full flex items-center gap-3 p-3 rounded-lg border text-left transition-colors',
-                        isSelected ? 'border-violet-500/50 bg-violet-500/10' : 'border-gray-700 hover:border-gray-600'
-                      )}
-                    >
-                      <Icon className={clsx('w-4 h-4 flex-shrink-0', isSelected ? 'text-violet-400' : 'text-gray-400')} />
-                      <div>
-                        <p className={clsx('text-xs font-medium', isSelected ? 'text-white' : 'text-gray-300')}>{info.label}</p>
-                        <p className="text-xs text-gray-500">{info.desc}</p>
-                      </div>
-                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-violet-400 ml-auto" />}
-                    </button>
-                  )
-                })}
+              <label className="label">Output format</label>
+              <div className="mt-3 space-y-3">
+                {(Object.entries(formatInfo) as Array<[keyof typeof formatInfo, (typeof formatInfo)[keyof typeof formatInfo]]>).map(
+                  ([key, item]) => {
+                    const Icon = item.icon
+                    const active = format === key
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setFormat(key)}
+                        className={clsx(
+                          'flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition',
+                          active ? 'border-sky-400/22 bg-sky-400/10' : 'border-white/8 bg-white/[0.02] hover:border-white/16'
+                        )}
+                      >
+                        <div
+                          className={clsx(
+                            'flex h-10 w-10 items-center justify-center rounded-xl border',
+                            active ? 'border-sky-400/18 bg-sky-400/10 text-sky-200' : 'border-white/8 bg-white/[0.03] text-slate-500'
+                          )}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-white">{item.label}</p>
+                            {active && <CheckCircle2 className="h-4 w-4 text-sky-200" />}
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-400">{item.description}</p>
+                        </div>
+                      </button>
+                    )
+                  }
+                )}
               </div>
             </div>
 
-            <button
-              disabled={!selectedScan || generating}
-              onClick={() => generate.mutate()}
-              className={clsx(
-                'w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                selectedScan && !generating
-                  ? 'bg-violet-600 hover:bg-violet-500 text-white'
-                  : 'bg-gray-800 text-gray-500 cursor-not-allowed'
-              )}
-            >
-              {generating ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
-              ) : (
-                <><Download className="w-4 h-4" /> Generate & Download</>
-              )}
+            <button disabled={!selectedScan || generate.isPending} onClick={() => generate.mutate()} className="btn-primary">
+              {generate.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Generate and download
             </button>
           </div>
         </div>
 
-        {/* Report history */}
-        <div className="col-span-2">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-300">Report History</h2>
-              <button
-                onClick={() => qc.invalidateQueries({ queryKey: ['reports'] })}
-                className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-gray-800 transition-colors"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-              </button>
+        <div className="panel overflow-hidden">
+          <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+            <div>
+              <p className="label">Report ledger</p>
+              <h3 className="mt-1 text-lg font-semibold text-white">Generated exports</h3>
             </div>
+            <button onClick={() => qc.invalidateQueries({ queryKey: ['reports'] })} className="btn-secondary px-3 py-2">
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </div>
 
-            {reportsLoading ? (
-              <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
-                <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading...
-              </div>
-            ) : reports.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-gray-500 space-y-2">
-                <FileText className="w-8 h-8 opacity-30" />
-                <p className="text-sm">No reports generated yet.</p>
-              </div>
-            ) : (
+          {isLoading ? (
+            <div className="px-6 py-12 text-center text-sm text-slate-500">Loading report history…</div>
+          ) : reports.length === 0 ? (
+            <div className="px-6 py-12 text-center text-sm text-slate-500">No reports have been generated yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-gray-500 text-left border-b border-gray-800 text-xs">
-                    <th className="px-5 py-3 font-medium">Domain</th>
-                    <th className="px-5 py-3 font-medium">Format</th>
-                    <th className="px-5 py-3 font-medium">Score</th>
-                    <th className="px-5 py-3 font-medium">Generated</th>
-                    <th className="px-5 py-3 font-medium"></th>
+                <thead className="border-b border-white/8 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3 font-medium">Domain</th>
+                    <th className="px-6 py-3 font-medium">Format</th>
+                    <th className="px-6 py-3 font-medium">Score</th>
+                    <th className="px-6 py-3 font-medium">Generated</th>
+                    <th className="px-6 py-3 font-medium" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {reports.map((rep: any) => (
-                    <tr key={rep.id} className="hover:bg-gray-800/50 transition-colors">
-                      <td className="px-5 py-3 font-mono text-xs text-white">{rep.domain}</td>
-                      <td className="px-5 py-3">
-                        <span className={clsx('text-xs px-2 py-0.5 rounded font-mono uppercase',
-                          rep.format === 'html' ? 'bg-blue-500/20 text-blue-400' :
-                          rep.format === 'pdf'  ? 'bg-red-500/20 text-red-400' :
-                          'bg-amber-500/20 text-amber-400'
-                        )}>
-                          {rep.format}
-                        </span>
+                <tbody className="divide-y divide-white/6">
+                  {reports.map((report: any) => (
+                    <tr key={report.id} className="hover:bg-white/[0.03]">
+                      <td className="px-6 py-4 font-medium text-white">{report.domain}</td>
+                      <td className="px-6 py-4">
+                        <span className="chip uppercase">{report.format}</span>
                       </td>
-                      <td className="px-5 py-3">
-                        <span className={clsx('text-sm font-bold',
-                          rep.score >= 80 ? 'text-emerald-400' : rep.score >= 60 ? 'text-amber-400' : 'text-red-400'
-                        )}>
-                          {rep.score}
-                        </span>
+                      <td className="px-6 py-4 text-slate-300">{report.score}</td>
+                      <td className="px-6 py-4 text-slate-400">
+                        {report.generated_at ? new Date(report.generated_at).toLocaleString() : '—'}
                       </td>
-                      <td className="px-5 py-3 text-xs text-gray-400">
-                        {rep.generated_at ? new Date(rep.generated_at).toLocaleString() : '—'}
-                      </td>
-                      <td className="px-5 py-3">
-                        <button
-                          onClick={() => downloadReport(rep.id, rep.format)}
-                          className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
-                        >
-                          <Download className="w-3.5 h-3.5" /> Download
+                      <td className="px-6 py-4">
+                        <button onClick={() => downloadReport(report.id, report.format)} className="btn-secondary px-3 py-2">
+                          <Download className="h-4 w-4" />
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            )}
-          </div>
+            </div>
+          )}
         </div>
-      </div>
+      </section>
+    </div>
+  )
+}
+
+function InfoLine({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-white">{value}</p>
     </div>
   )
 }

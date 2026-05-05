@@ -13,7 +13,7 @@ function SortHeader({ label, field, current, dir, onClick }: {
 }) {
   const active = current === field
   return (
-    <th className="px-4 py-3 font-medium cursor-pointer select-none hover:text-gray-300 transition-colors" onClick={() => onClick(field)}>
+    <th className="px-4 py-3 font-medium cursor-pointer select-none hover:text-slate-200 transition-colors" onClick={() => onClick(field)}>
       <span className="flex items-center gap-1">
         {label}
         {active ? (dir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3 opacity-40" />}
@@ -62,18 +62,18 @@ export function DCsTable({ snapshotId }: { snapshotId: string }) {
 
   return (
     <div>
-      <div className="flex items-center gap-3 p-4 border-b border-gray-800">
+      <div className="flex items-center gap-3 border-b border-white/8 p-4">
         <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search DCs..."
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:border-violet-500 focus:outline-none" />
+            className="input pl-9" />
         </div>
-        <span className="text-xs text-gray-500 ml-auto whitespace-nowrap">{filtered.length} / {dcs.length}</span>
+        <span className="ml-auto whitespace-nowrap text-xs text-slate-500">{filtered.length} / {dcs.length}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-gray-500 text-left border-b border-gray-800 text-xs">
+            <tr className="border-b border-white/8 text-left text-xs text-slate-500">
               <SortHeader label="DC Name" field="name" current={sortField} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="IP" field="ip" current={sortField} dir={sortDir} onClick={toggleSort} />
               <SortHeader label="OS" field="os" current={sortField} dir={sortDir} onClick={toggleSort} />
@@ -83,34 +83,34 @@ export function DCsTable({ snapshotId }: { snapshotId: string }) {
               <SortHeader label="Risk" field="risk" current={sortField} dir={sortDir} onClick={toggleSort} />
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-800">
-            {isLoading && <tr><td colSpan={7} className="text-center py-8 text-gray-500">Loading...</td></tr>}
-            {!isLoading && filtered.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-gray-500">No DCs found.</td></tr>}
+          <tbody className="divide-y divide-white/6">
+            {isLoading && <tr><td colSpan={7} className="py-8 text-center text-slate-500">Loading...</td></tr>}
+            {!isLoading && filtered.length === 0 && <tr><td colSpan={7} className="py-8 text-center text-slate-500">No DCs found.</td></tr>}
             {filtered.map((dc, i) => {
               const riskScore = (dc.spooler_running ? 3 : 0) + (!dc.smb_signing_required ? 2 : 0) + (!dc.ldap_signing_required ? 1 : 0)
               return (
-                <tr key={i} className="hover:bg-gray-800/50 transition-colors">
+                <tr key={i} className="transition-colors hover:bg-white/[0.03]">
                   <td className="px-4 py-2.5">
                     <p className="font-mono text-xs text-white">{dc.name}</p>
                     <div className="flex gap-1 mt-0.5">
-                      {dc.is_read_only && <span className="text-xs text-gray-500">RODC</span>}
-                      {dc.is_global_catalog && <span className="text-xs text-violet-400">GC</span>}
+                      {dc.is_read_only && <span className="text-xs text-slate-500">RODC</span>}
+                      {dc.is_global_catalog && <span className="text-xs text-sky-300">GC</span>}
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-gray-400">{dc.ip_address || '—'}</td>
-                  <td className="px-4 py-2.5 text-xs text-gray-300">{dc.operating_system}</td>
-                  <td className="px-4 py-2.5 text-xs text-gray-400">{dc.site || '—'}</td>
-                  <td className="px-4 py-2.5 text-xs text-gray-400">{dc.fsmo_roles?.join(', ') || '—'}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-slate-400">{dc.ip_address || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-300">{dc.operating_system}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-400">{dc.site || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-400">{dc.fsmo_roles?.join(', ') || '—'}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex flex-wrap gap-1">
-                      {dc.spooler_running && <span className="text-xs bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded">Spooler</span>}
-                      {!dc.smb_signing_required && <span className="text-xs bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded">No SMB Sign</span>}
-                      {!dc.ldap_signing_required && <span className="text-xs bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded">No LDAP Sign</span>}
+                      {dc.spooler_running && <span className="text-xs bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">Spooler</span>}
+                      {!dc.smb_signing_required && <span className="text-xs bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded">No SMB Sign</span>}
+                      {!dc.ldap_signing_required && <span className="text-xs bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded">No LDAP Sign</span>}
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
                     {riskScore > 0 && (
-                      <span className={clsx('text-xs font-medium', riskScore >= 3 ? 'text-red-400' : riskScore >= 2 ? 'text-orange-400' : 'text-amber-400')}>
+                      <span className={clsx('text-xs font-medium', riskScore >= 3 ? 'text-red-300' : riskScore >= 2 ? 'text-orange-300' : 'text-amber-300')}>
                         {riskScore >= 3 ? 'High' : riskScore >= 2 ? 'Med' : 'Low'}
                       </span>
                     )}

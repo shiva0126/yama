@@ -1,57 +1,53 @@
-import { RadialBarChart, RadialBar, PolarAngleAxis, ResponsiveContainer } from 'recharts'
-import clsx from 'clsx'
+import { RadialBar, RadialBarChart, PolarAngleAxis, ResponsiveContainer } from 'recharts'
 
 interface Props {
   score: number
 }
 
 function scoreColor(score: number) {
-  if (score >= 80) return '#10b981' // green
-  if (score >= 60) return '#f59e0b' // amber
-  if (score >= 40) return '#f97316' // orange
-  return '#ef4444'                  // red
+  if (score >= 85) return '#73e0c0'
+  if (score >= 70) return '#4ea1ff'
+  if (score >= 50) return '#f4c96b'
+  return '#ff6b6b'
 }
 
 function scoreLabel(score: number) {
-  if (score >= 80) return 'Good'
-  if (score >= 60) return 'Fair'
-  if (score >= 40) return 'Poor'
-  return 'Critical'
+  if (score >= 85) return 'Controlled'
+  if (score >= 70) return 'Stable'
+  if (score >= 50) return 'At risk'
+  return 'Exposed'
 }
 
 export function ScoreGauge({ score }: Props) {
   const color = scoreColor(score)
-  const data = [{ value: score, fill: color }]
 
   return (
     <div className="flex flex-col items-center">
-      <div className="relative w-48 h-48">
+      <div className="relative h-56 w-56">
         <ResponsiveContainer width="100%" height="100%">
           <RadialBarChart
             cx="50%"
             cy="50%"
-            innerRadius="60%"
-            outerRadius="80%"
-            barSize={12}
-            data={data}
-            startAngle={180}
-            endAngle={0}
+            data={[{ value: score, fill: color }]}
+            innerRadius="62%"
+            outerRadius="84%"
+            barSize={16}
+            startAngle={210}
+            endAngle={-30}
           >
-            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-            <RadialBar background={{ fill: '#1f2937' }} dataKey="value" angleAxisId={0} />
+            <PolarAngleAxis type="number" domain={[0, 100]} tick={false} angleAxisId={0} />
+            <RadialBar background={{ fill: 'rgba(255,255,255,0.08)' }} dataKey="value" angleAxisId={0} cornerRadius={16} />
           </RadialBarChart>
         </ResponsiveContainer>
+
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-4xl font-bold text-white">{score}</span>
-          <span className="text-xs text-gray-400">out of 100</span>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Protection index</p>
+          <span className="mt-2 text-5xl font-semibold text-white">{score}</span>
+          <span className="mt-1 text-sm font-medium" style={{ color }}>
+            {scoreLabel(score)}
+          </span>
         </div>
       </div>
-      <span
-        className="mt-2 text-sm font-semibold px-3 py-1 rounded-full"
-        style={{ color, backgroundColor: color + '20' }}
-      >
-        {scoreLabel(score)}
-      </span>
     </div>
   )
 }

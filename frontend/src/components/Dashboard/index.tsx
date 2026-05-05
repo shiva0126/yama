@@ -1,33 +1,46 @@
-import { useQuery } from '@tanstack/react-query'
-import { scansApi, findingsApi } from '../../api'
-import { ScoreGauge } from './ScoreGauge'
-import { Shield, AlertTriangle, Server, TrendingUp, TrendingDown, Minus, Activity, ChevronRight } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import clsx from 'clsx'
-import { format } from 'date-fns'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { ScanJob, Finding } from '../../types'
+import { useQuery } from '@tanstack/react-query'
+import { format } from 'date-fns'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { ArrowRight, BadgeAlert, Blocks, Bot, ShieldAlert, ShieldEllipsis, Target } from 'lucide-react'
+import { findingsApi, scansApi } from '../../api'
+import { ScoreGauge } from './ScoreGauge'
+import type { Finding, SecurityIndicator } from '../../types'
 
-const SEVERITY_COLORS = {
-  critical: { bg: 'bg-red-500',    text: 'text-red-400',    light: 'bg-red-500/10 border-red-500/20' },
-  high:     { bg: 'bg-orange-500', text: 'text-orange-400', light: 'bg-orange-500/10 border-orange-500/20' },
-  medium:   { bg: 'bg-amber-500',  text: 'text-amber-400',  light: 'bg-amber-500/10 border-amber-500/20' },
-  low:      { bg: 'bg-blue-500',   text: 'text-blue-400',   light: 'bg-blue-500/10 border-blue-500/20' },
-  info:     { bg: 'bg-gray-500',   text: 'text-gray-400',   light: 'bg-gray-500/10 border-gray-500/20' },
+const severityPalette: Record<string, string> = {
+  critical: '#ff6b6b',
+  high: '#ff9c54',
+  medium: '#f4c96b',
+  low: '#5ea9ff',
+  info: '#6b7b90',
 }
 
-const CATEGORY_ICONS: Record<string, string> = {
-  'Kerberos': '🎟',
-  'Account Security': '👤',
-  'Privileged Access': '👑',
-  'Group Policy': '📋',
-  'Domain Controllers': '🖥',
-  'AD Structure': '🏗',
-  'Delegation': '🔗',
-  'Trusts': '🤝',
-  'PKI / Certificate Services': '🔐',
-  'NTLM & Authentication': '🔑',
-  'Persistence Mechanisms': '🕷',
+const categoryTone: Record<string, string> = {
+  Kerberos: '#8bbdff',
+  'Privileged Access': '#ff8a7a',
+  'PKI / Certificate Services': '#73e0c0',
+  Delegation: '#76c0ff',
+  Trusts: '#f4c96b',
+  'NTLM & Authentication': '#ff9c54',
+  'Persistence Mechanisms': '#d38bff',
+  'Group Policy': '#91a7ff',
+  'Domain Controllers': '#6fd0e4',
+  'AD Structure': '#8ca8c7',
+  'Account Security': '#ffb36d',
 }
 
 export function Dashboard() {
@@ -35,336 +48,481 @@ export function Dashboard() {
 
   const { data: scansData } = useQuery({
     queryKey: ['scans'],
-    queryFn: () => scansApi.list().then(r => r.data),
-    refetchInterval: 10_000,
+    queryFn: () => scansApi.list().then((r) => r.data),
+    refetchInterval: 10000,
   })
 
   const scans = scansData?.scans ?? []
-  const completedScans = scans.filter(s => s.status === 'completed')
+  const completedScans = scans.filter((scan) => scan.status === 'completed')
   const latestScan = completedScans[0]
-  const prevScan = completedScans[1]
+  const previousScan = completedScans[1]
+  const runningScan = scans.find((scan) => scan.status === 'running')
 
   const { data: findingsData } = useQuery({
     queryKey: ['findings', latestScan?.id],
-    queryFn: () => latestScan ? findingsApi.getByScan(latestScan.id).then(r => r.data) : null,
+    queryFn: () => (latestScan ? findingsApi.getByScan(latestScan.id).then((r) => r.data) : null),
     enabled: !!latestScan,
   })
 
+  const { data: indicatorsData } = useQuery({
+    queryKey: ['indicator-catalog'],
+    queryFn: () => findingsApi.listIndicators().then((r) => r.data),
+  })
+
   const findings = findingsData?.findings ?? []
-  const criticalFindings = findings.filter(f => f.severity === 'critical').slice(0, 5)
-  const highFindings     = findings.filter(f => f.severity === 'high').slice(0, 5)
-  const topFindings      = [...criticalFindings, ...highFindings].slice(0, 6)
+  const indicators = indicatorsData?.indicators ?? []
 
-  // Score delta vs previous scan
-  const scoreDelta = latestScan && prevScan && latestScan.overall_score != null && prevScan.overall_score != null
-    ? latestScan.overall_score - prevScan.overall_score : null
+  const postureDelta =
+    latestScan?.overall_score != null && previousScan?.overall_score != null
+      ? latestScan.overall_score - previousScan.overall_score
+      : null
 
-  // Trend data — last 10 completed scans oldest→newest
-  const trendData = [...completedScans].reverse().slice(-10).map(s => ({
-    date: format(new Date(s.completed_at!), 'MMM d'),
-    score: s.overall_score ?? 0,
-    findings: s.total_findings ?? 0,
-    critical: s.critical_count ?? 0,
-    high: s.high_count ?? 0,
-  }))
+  const {
+    priorityFindings,
+    severityData,
+    categoryData,
+    trendData,
+    attackCoverage,
+    topAffectedObjects,
+  } = useMemo(() => {
+    const priority = [...findings]
+      .sort((a, b) => {
+        if (a.severity === b.severity) return b.risk_score - a.risk_score
+        return severityRank(b.severity) - severityRank(a.severity)
+      })
+      .slice(0, 6)
 
-  // Category breakdown from findings
-  const catMap: Record<string, { critical: number; high: number; medium: number; low: number; total: number }> = {}
-  for (const f of findings) {
-    if (!catMap[f.category]) catMap[f.category] = { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
-    catMap[f.category][f.severity as 'critical' | 'high' | 'medium' | 'low']++
-    catMap[f.category].total++
-  }
+    const severityCounts = ['critical', 'high', 'medium', 'low', 'info'].map((severity) => ({
+      name: severityLabel(severity),
+      key: severity,
+      value: findings.filter((finding) => finding.severity === severity).length,
+      color: severityPalette[severity],
+    }))
 
-  const runningScan = scans.find(s => s.status === 'running')
+    const categoryMap = new Map<string, { total: number; weighted: number }>()
+    findings.forEach((finding) => {
+      const existing = categoryMap.get(finding.category) ?? { total: 0, weighted: 0 }
+      existing.total += 1
+      existing.weighted += severityRank(finding.severity) * 10 + finding.risk_score
+      categoryMap.set(finding.category, existing)
+    })
+
+    const categoryEntries = [...categoryMap.entries()]
+      .map(([name, value]) => ({
+        name,
+        total: value.total,
+        weighted: value.weighted,
+        color: categoryTone[name] ?? '#7c9ec6',
+      }))
+      .sort((a, b) => b.weighted - a.weighted)
+      .slice(0, 7)
+
+    const trend = [...completedScans]
+      .reverse()
+      .slice(-8)
+      .map((scan) => ({
+        date: scan.completed_at ? format(new Date(scan.completed_at), 'MMM d') : 'Pending',
+        score: scan.overall_score ?? 0,
+        critical: scan.critical_count ?? 0,
+        high: scan.high_count ?? 0,
+      }))
+
+    const covered = new Set(findings.map((finding) => finding.indicator_id)).size
+    const coverage = indicators.length > 0 ? Math.round((covered / indicators.length) * 100) : 0
+
+    const objectMap = new Map<string, { label: string; count: number }>()
+    findings.forEach((finding) => {
+      finding.affected_objects?.slice(0, 5).forEach((object) => {
+        const key = `${object.type}:${object.name}`
+        const current = objectMap.get(key) ?? { label: `${object.type} · ${object.name}`, count: 0 }
+        current.count += 1
+        objectMap.set(key, current)
+      })
+    })
+
+    const objects = [...objectMap.values()].sort((a, b) => b.count - a.count).slice(0, 5)
+
+    return {
+      priorityFindings: priority,
+      severityData: severityCounts,
+      categoryData: categoryEntries,
+      trendData: trend,
+      attackCoverage: { covered, total: indicators.length, percentage: coverage },
+      topAffectedObjects: objects,
+    }
+  }, [completedScans, findings, indicators])
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Dashboard</h1>
-          <p className="text-gray-400 text-sm mt-0.5">
-            {latestScan ? `Last scan: ${latestScan.domain} · ${format(new Date(latestScan.completed_at!), 'MMM d, yyyy HH:mm')}` : 'No scans yet'}
-          </p>
-        </div>
-        {runningScan && (
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-violet-500/10 border border-violet-500/30 rounded-lg">
-            <Activity className="w-4 h-4 text-violet-400 animate-pulse" />
-            <span className="text-xs text-violet-400 font-medium">Scan in progress — {runningScan.progress}%</span>
+      <section className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr]">
+        <div className="panel-strong overflow-hidden">
+          <div className="border-b border-white/8 px-6 py-5">
+            <p className="label">Overview</p>
+            <h2 className="mt-2 text-3xl font-semibold tracking-tight text-white">Security posture</h2>
           </div>
-        )}
-      </div>
 
-      {/* Stat cards row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Security Score"
-          value={latestScan?.overall_score ?? '—'}
-          suffix="/100"
-          delta={scoreDelta}
-          icon={<Shield className="w-5 h-5" />}
-          color="violet"
-        />
-        <StatCard
-          label="Critical Findings"
-          value={latestScan?.critical_count ?? '—'}
-          icon={<AlertTriangle className="w-5 h-5" />}
-          color={latestScan?.critical_count ? 'red' : 'green'}
-          good={latestScan?.critical_count === 0}
-        />
-        <StatCard
-          label="High Findings"
-          value={latestScan?.high_count ?? '—'}
-          icon={<AlertTriangle className="w-5 h-5" />}
-          color={latestScan?.high_count ? 'orange' : 'green'}
-        />
-        <StatCard
-          label="Total Scans"
-          value={completedScans.length}
-          icon={<Server className="w-5 h-5" />}
-          color="blue"
-          sub={`${scans.filter(s => s.status === 'running').length > 0 ? '1 running' : 'none running'}`}
-        />
-      </div>
-
-      {/* Score + trend row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Gauge */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col items-center justify-center">
-          <p className="text-xs font-medium text-gray-400 mb-3 self-start">Security Score</p>
-          <ScoreGauge score={latestScan?.overall_score ?? 0} />
-          {scoreDelta !== null && (
-            <div className={clsx('flex items-center gap-1 text-xs mt-3 font-medium',
-              scoreDelta > 0 ? 'text-emerald-400' : scoreDelta < 0 ? 'text-red-400' : 'text-gray-400')}>
-              {scoreDelta > 0 ? <TrendingUp className="w-3.5 h-3.5" /> : scoreDelta < 0 ? <TrendingDown className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
-              {scoreDelta > 0 ? '+' : ''}{scoreDelta} vs previous scan
-            </div>
-          )}
-        </div>
-
-        {/* Score trend chart */}
-        <div className="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-6">
-          <p className="text-xs font-medium text-gray-400 mb-4">Score Trend (last {trendData.length} scans)</p>
-          {trendData.length < 2 ? (
-            <div className="flex items-center justify-center h-40 text-gray-600 text-sm">
-              Need 2+ completed scans to show trend
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={160}>
-              <LineChart data={trendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis domain={[0, 100]} tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={28} />
-                <Tooltip
-                  contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8 }}
-                  labelStyle={{ color: '#9ca3af', fontSize: 11 }}
-                  itemStyle={{ fontSize: 12 }}
-                />
-                <Line type="monotone" dataKey="score" stroke="#8b5cf6" strokeWidth={2} dot={{ fill: '#8b5cf6', r: 3 }} name="Score" />
-                <Line type="monotone" dataKey="findings" stroke="#f59e0b" strokeWidth={2} dot={{ fill: '#f59e0b', r: 3 }} name="Findings" />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      {/* Findings severity summary + category health */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Severity breakdown */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-          <p className="text-xs font-medium text-gray-400 mb-4">Findings Breakdown</p>
-          <div className="space-y-2.5">
-            {(['critical', 'high', 'medium', 'low', 'info'] as const).map(sev => {
-              const count = latestScan?.[`${sev}_count` as keyof ScanJob] as number ?? 0
-              const total = latestScan?.total_findings ?? 1
-              const pct   = total > 0 ? Math.round((count / total) * 100) : 0
-              const c     = SEVERITY_COLORS[sev]
-              return (
-                <div key={sev} className="flex items-center gap-3">
-                  <span className="text-xs text-gray-500 w-16 capitalize">{sev}</span>
-                  <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
-                    <div className={clsx('h-full rounded-full transition-all', c.bg)} style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className={clsx('text-sm font-semibold w-6 text-right', c.text)}>{count}</span>
-                </div>
-              )
-            })}
+          <div className="grid gap-4 px-6 py-6 md:grid-cols-2 2xl:grid-cols-4">
+            <MetricCard
+              icon={ShieldEllipsis}
+              title="Protection index"
+              value={latestScan?.overall_score ?? '—'}
+              suffix="/100"
+              detail={postureDelta == null ? 'Awaiting historical baseline' : `${postureDelta >= 0 ? '+' : ''}${postureDelta} vs prior run`}
+            />
+            <MetricCard
+              icon={BadgeAlert}
+              title="Critical exposures"
+              value={latestScan?.critical_count ?? 0}
+              detail="Immediate attack enablers"
+              tone="danger"
+            />
+            <MetricCard
+              icon={Target}
+              title="Attack classes covered"
+              value={attackCoverage.covered}
+              suffix={attackCoverage.total ? `/${attackCoverage.total}` : ''}
+              detail={`${attackCoverage.percentage}% of current indicator catalog hit in latest dataset`}
+              tone="info"
+            />
+            <MetricCard
+              icon={Bot}
+              title="Collector state"
+              value={runningScan ? 'Live' : 'Idle'}
+              detail={runningScan ? `${runningScan.domain} at ${runningScan.progress}%` : 'No active assessment execution'}
+              tone={runningScan ? 'success' : 'default'}
+            />
           </div>
         </div>
 
-        {/* Category health grid */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-          <p className="text-xs font-medium text-gray-400 mb-4">Risk by Category</p>
-          {Object.keys(catMap).length === 0 ? (
-            <p className="text-gray-600 text-sm text-center pt-6">No findings to display</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(catMap).sort((a, b) => b[1].total - a[1].total).map(([cat, counts]) => (
-                <button
-                  key={cat}
-                  onClick={() => navigate(`/findings?category=${encodeURIComponent(cat)}`)}
-                  className="flex items-center gap-2 p-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-left transition-colors group"
-                >
-                  <span className="text-base">{CATEGORY_ICONS[cat] ?? '🔍'}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-white font-medium truncate">{cat}</p>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      {counts.critical > 0 && <span className="text-red-400 text-xs font-semibold">{counts.critical}C</span>}
-                      {counts.high > 0 && <span className="text-orange-400 text-xs">{counts.high}H</span>}
-                      {counts.medium > 0 && <span className="text-amber-400 text-xs">{counts.medium}M</span>}
-                      {counts.low > 0 && <span className="text-blue-400 text-xs">{counts.low}L</span>}
-                    </div>
-                  </div>
-                  <ChevronRight className="w-3.5 h-3.5 text-gray-600 group-hover:text-gray-400" />
-                </button>
-              ))}
+        <div className="panel p-6">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="label">Latest operation</p>
+              <h3 className="mt-2 text-xl font-semibold text-white">{latestScan?.domain ?? 'No completed assessment'}</h3>
+              <p className="mt-1 text-sm text-slate-400">
+                {latestScan?.completed_at
+                  ? `Completed ${format(new Date(latestScan.completed_at), 'MMM d, yyyy • HH:mm')}`
+                  : 'No completed assessment available.'}
+              </p>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Top priority findings */}
-      {topFindings.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-gray-800 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Top Priority Findings</h2>
-            <button
-              onClick={() => navigate('/findings')}
-              className="text-xs text-violet-400 hover:text-violet-300 transition-colors flex items-center gap-1"
-            >
-              View all <ChevronRight className="w-3.5 h-3.5" />
+            <button onClick={() => navigate('/scanner')} className="btn-secondary">
+              Open Assessment
             </button>
           </div>
-          <div className="divide-y divide-gray-800">
-            {topFindings.map(f => (
-              <TopFindingRow key={f.id} finding={f} />
-            ))}
+
+          <div className="mt-6 flex items-center justify-center">
+            <ScoreGauge score={latestScan?.overall_score ?? 0} />
+          </div>
+
+          <div className="mt-6 grid gap-3 md:grid-cols-2">
+            <CompactStat label="Critical" value={latestScan?.critical_count ?? 0} tone="critical" />
+            <CompactStat label="High" value={latestScan?.high_count ?? 0} tone="high" />
+            <CompactStat label="Medium" value={latestScan?.medium_count ?? 0} tone="medium" />
+            <CompactStat label="Total findings" value={latestScan?.total_findings ?? 0} tone="neutral" />
           </div>
         </div>
-      )}
+      </section>
 
-      {/* Recent scans */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">Scan History</h2>
-          <button onClick={() => navigate('/scanner')} className="text-xs text-violet-400 hover:text-violet-300 transition-colors flex items-center gap-1">
-            Run new scan <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+      <section className="grid gap-6 2xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="panel p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="label">Posture trend</p>
+              <h3 className="mt-2 text-lg font-semibold text-white">Security score versus severe exposure load</h3>
+            </div>
+            <button onClick={() => navigate('/reports')} className="btn-ghost text-sky-300">
+              Review reports
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-5 h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={trendData}>
+                <defs>
+                  <linearGradient id="scoreFill" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="#4ea1ff" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#4ea1ff" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="criticalFill" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="#ff6b6b" stopOpacity={0.28} />
+                    <stop offset="100%" stopColor="#ff6b6b" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <XAxis dataKey="date" stroke="#73839a" tickLine={false} axisLine={false} />
+                <YAxis stroke="#73839a" tickLine={false} axisLine={false} width={36} />
+                <Tooltip
+                  contentStyle={{
+                    background: 'rgba(7, 17, 31, 0.96)',
+                    border: '1px solid rgba(124, 154, 190, 0.16)',
+                    borderRadius: 16,
+                    color: '#e8eef8',
+                  }}
+                />
+                <Area type="monotone" dataKey="score" stroke="#4ea1ff" fill="url(#scoreFill)" strokeWidth={2.5} />
+                <Area type="monotone" dataKey="critical" stroke="#ff6b6b" fill="url(#criticalFill)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs border-b border-gray-800">
-                <th className="px-4 py-2.5 text-left font-medium">Domain</th>
-                <th className="px-4 py-2.5 text-left font-medium">Date</th>
-                <th className="px-4 py-2.5 text-left font-medium">Score</th>
-                <th className="px-4 py-2.5 text-left font-medium">Findings</th>
-                <th className="px-4 py-2.5 text-left font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {scans.slice(0, 8).map(s => (
-                <ScanRow key={s.id} scan={s} onClick={() => navigate(`/findings?scan_id=${s.id}`)} />
+
+        <div className="grid gap-6">
+          <div className="panel p-6">
+            <p className="label">Severity profile</p>
+            <h3 className="mt-2 text-lg font-semibold text-white">Latest exposure mix</h3>
+            <div className="mt-4 grid items-center gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={severityData}
+                      dataKey="value"
+                      innerRadius={58}
+                      outerRadius={84}
+                      paddingAngle={3}
+                      stroke="rgba(7, 17, 31, 0.8)"
+                    >
+                      {severityData.map((entry) => (
+                        <Cell key={entry.key} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        background: 'rgba(7, 17, 31, 0.96)',
+                        border: '1px solid rgba(124, 154, 190, 0.16)',
+                        borderRadius: 16,
+                        color: '#e8eef8',
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-3">
+                {severityData.map((entry) => (
+                  <div key={entry.key} className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                      <span className="text-sm text-slate-300">{entry.name}</span>
+                    </div>
+                    <span className="text-sm font-semibold text-white">{entry.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="panel p-6">
+            <p className="label">Attack pressure</p>
+            <h3 className="mt-2 text-lg font-semibold text-white">Most exposed control domains</h3>
+            <div className="mt-4 h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={categoryData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 24 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                  <XAxis type="number" stroke="#73839a" axisLine={false} tickLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    stroke="#73839a"
+                    axisLine={false}
+                    tickLine={false}
+                    width={120}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'rgba(7, 17, 31, 0.96)',
+                      border: '1px solid rgba(124, 154, 190, 0.16)',
+                      borderRadius: 16,
+                      color: '#e8eef8',
+                    }}
+                  />
+                  <Bar dataKey="weighted" radius={[0, 8, 8, 0]}>
+                    {categoryData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="panel overflow-hidden">
+          <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+            <div>
+              <p className="label">Priority queue</p>
+              <h3 className="mt-1 text-lg font-semibold text-white">Highest-priority exposures from the latest assessment</h3>
+            </div>
+            <button onClick={() => navigate('/findings')} className="btn-secondary">
+              Open Exposure
+            </button>
+          </div>
+
+          <div className="divide-y divide-white/6">
+            {priorityFindings.length === 0 ? (
+              <div className="px-6 py-14 text-center text-sm text-slate-500">No findings available yet.</div>
+            ) : (
+              priorityFindings.map((finding) => (
+                <button
+                  key={finding.id}
+                  onClick={() => navigate('/findings')}
+                  className="flex w-full items-start gap-4 px-6 py-4 text-left transition hover:bg-white/[0.03]"
+                >
+                  <div
+                    className="mt-1 h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: severityPalette[finding.severity] }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-white">{finding.name}</span>
+                      <span className="chip px-2.5 py-0.5" style={{ color: severityPalette[finding.severity] }}>
+                        {severityLabel(finding.severity)}
+                      </span>
+                      <span className="text-xs uppercase tracking-[0.16em] text-slate-500">{finding.indicator_id}</span>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-400">{finding.description}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Risk</p>
+                    <p className="mt-1 text-lg font-semibold text-white">{finding.risk_score}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-6">
+          <div className="panel p-6">
+            <p className="label">Affected surface</p>
+            <h3 className="mt-2 text-lg font-semibold text-white">Objects appearing most often across findings</h3>
+            <div className="mt-4 space-y-3">
+              {topAffectedObjects.length === 0 ? (
+                <p className="text-sm text-slate-500">No affected-object telemetry available yet.</p>
+              ) : (
+                topAffectedObjects.map((object) => (
+                  <div key={object.label} className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <Blocks className="h-4 w-4 text-slate-500" />
+                      <span className="text-sm text-slate-300">{object.label}</span>
+                    </div>
+                    <span className="text-sm font-semibold text-white">{object.count}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="panel p-6">
+            <p className="label">Run ledger</p>
+            <h3 className="mt-2 text-lg font-semibold text-white">Recent assessments</h3>
+            <div className="mt-4 space-y-3">
+              {completedScans.slice(0, 5).map((scan) => (
+                <div key={scan.id} className="rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{scan.domain}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {scan.completed_at ? format(new Date(scan.completed_at), 'MMM d, yyyy • HH:mm') : 'Pending'}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Score</p>
+                      <p className="text-sm font-semibold text-white">{scan.overall_score ?? '—'}</p>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
   )
 }
 
-function StatCard({ label, value, suffix, delta, icon, color, good, sub }: {
-  label: string; value: number | string; suffix?: string; delta?: number | null
-  icon: React.ReactNode; color: string; good?: boolean; sub?: string
+function severityRank(severity: string) {
+  switch (severity) {
+    case 'critical':
+      return 5
+    case 'high':
+      return 4
+    case 'medium':
+      return 3
+    case 'low':
+      return 2
+    default:
+      return 1
+  }
+}
+
+function severityLabel(severity: string) {
+  return severity.charAt(0).toUpperCase() + severity.slice(1)
+}
+
+function MetricCard({
+  icon: Icon,
+  title,
+  value,
+  suffix,
+  detail,
+  tone = 'default',
+}: {
+  icon: typeof ShieldAlert
+  title: string
+  value: string | number
+  suffix?: string
+  detail: string
+  tone?: 'default' | 'danger' | 'info' | 'success'
 }) {
-  const colorMap: Record<string, { border: string; icon: string; text: string }> = {
-    violet: { border: 'border-violet-500/20', icon: 'text-violet-400 bg-violet-500/10', text: 'text-violet-400' },
-    red:    { border: 'border-red-500/20',    icon: 'text-red-400 bg-red-500/10',       text: 'text-red-400' },
-    orange: { border: 'border-orange-500/20', icon: 'text-orange-400 bg-orange-500/10', text: 'text-orange-400' },
-    green:  { border: 'border-emerald-500/20',icon: 'text-emerald-400 bg-emerald-500/10',text: 'text-emerald-400' },
-    blue:   { border: 'border-blue-500/20',   icon: 'text-blue-400 bg-blue-500/10',     text: 'text-blue-400' },
+  const toneStyles: Record<string, string> = {
+    default: 'border-white/8 bg-white/[0.02] text-slate-300',
+    danger: 'border-red-400/18 bg-red-400/8 text-red-200',
+    info: 'border-sky-400/18 bg-sky-400/8 text-sky-200',
+    success: 'border-emerald-400/18 bg-emerald-400/8 text-emerald-200',
   }
-  const c = colorMap[good ? 'green' : color] ?? colorMap.blue
 
   return (
-    <div className={clsx('bg-gray-900 border rounded-xl p-5', c.border)}>
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-xs text-gray-400">{label}</p>
-        <div className={clsx('p-1.5 rounded-lg', c.icon)}>{icon}</div>
-      </div>
-      <div className="flex items-end gap-1">
-        <span className="text-3xl font-bold text-white">{value}</span>
-        {suffix && <span className="text-sm text-gray-500 mb-1">{suffix}</span>}
-      </div>
-      {sub && <p className="text-xs text-gray-500 mt-1">{sub}</p>}
-      {delta != null && (
-        <p className={clsx('text-xs mt-1 flex items-center gap-0.5',
-          delta > 0 ? 'text-emerald-400' : delta < 0 ? 'text-red-400' : 'text-gray-500')}>
-          {delta > 0 ? <TrendingUp className="w-3 h-3" /> : delta < 0 ? <TrendingDown className="w-3 h-3" /> : null}
-          {delta > 0 ? '+' : ''}{delta} from last scan
-        </p>
-      )}
-    </div>
-  )
-}
-
-function TopFindingRow({ finding }: { finding: Finding }) {
-  const sev = finding.severity
-  const c   = SEVERITY_COLORS[sev] ?? SEVERITY_COLORS.info
-  return (
-    <div className="px-5 py-3.5 flex items-center gap-4 hover:bg-gray-800/40 transition-colors">
-      <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium flex-shrink-0', c.light, c.text)}>
-        {sev}
-      </span>
-      <span className="text-xs font-mono text-gray-500 w-14 flex-shrink-0">{finding.indicator_id}</span>
-      <span className="text-sm text-white flex-1 min-w-0 truncate">{finding.name}</span>
-      <span className="text-xs text-gray-500 flex-shrink-0">{finding.category}</span>
-      {finding.mitre?.length > 0 && (
-        <span className="text-xs font-mono text-gray-600">{finding.mitre[0]}</span>
-      )}
-    </div>
-  )
-}
-
-function ScanRow({ scan, onClick }: { scan: ScanJob; onClick: () => void }) {
-  const statusColors: Record<string, string> = {
-    completed: 'text-emerald-400',
-    running:   'text-violet-400',
-    failed:    'text-red-400',
-    pending:   'text-gray-400',
-    cancelled: 'text-gray-500',
-  }
-  const score = scan.overall_score
-  const scoreColor = score == null ? 'text-gray-500'
-    : score >= 80 ? 'text-emerald-400'
-    : score >= 60 ? 'text-amber-400'
-    : score >= 40 ? 'text-orange-400'
-    : 'text-red-400'
-
-  return (
-    <tr className="hover:bg-gray-800/40 cursor-pointer transition-colors" onClick={onClick}>
-      <td className="px-4 py-3 font-mono text-xs text-white">{scan.domain}</td>
-      <td className="px-4 py-3 text-xs text-gray-400">
-        {scan.completed_at ? format(new Date(scan.completed_at), 'MMM d, yyyy HH:mm') : '—'}
-      </td>
-      <td className={clsx('px-4 py-3 text-sm font-bold', scoreColor)}>
-        {score != null ? score : '—'}
-      </td>
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2 text-xs">
-          {scan.critical_count > 0 && <span className="text-red-400 font-semibold">{scan.critical_count}C</span>}
-          {scan.high_count > 0 && <span className="text-orange-400">{scan.high_count}H</span>}
-          {scan.medium_count > 0 && <span className="text-amber-400">{scan.medium_count}M</span>}
-          {scan.low_count > 0 && <span className="text-blue-400">{scan.low_count}L</span>}
-          {scan.total_findings === 0 && <span className="text-gray-500">None</span>}
+    <div className={`rounded-2xl border p-4 ${toneStyles[tone]}`}>
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/8 bg-black/10">
+          <Icon className="h-4 w-4" />
         </div>
-      </td>
-      <td className={clsx('px-4 py-3 text-xs capitalize font-medium', statusColors[scan.status] ?? 'text-gray-400')}>
-        {scan.status}
-        {scan.status === 'running' && ` — ${scan.progress}%`}
-      </td>
-    </tr>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{title}</p>
+          <p className="mt-1 text-2xl font-semibold text-white">
+            {value}
+            {suffix ? <span className="ml-1 text-base text-slate-500">{suffix}</span> : null}
+          </p>
+        </div>
+      </div>
+      <p className="mt-3 text-sm text-slate-400">{detail}</p>
+    </div>
+  )
+}
+
+function CompactStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string | number
+  tone: 'critical' | 'high' | 'medium' | 'neutral'
+}) {
+  const styles: Record<string, string> = {
+    critical: 'border-red-400/16 bg-red-400/8 text-red-200',
+    high: 'border-orange-400/16 bg-orange-400/8 text-orange-200',
+    medium: 'border-amber-400/16 bg-amber-400/8 text-amber-200',
+    neutral: 'border-white/8 bg-white/[0.02] text-slate-200',
+  }
+
+  return (
+    <div className={`rounded-2xl border px-4 py-3 ${styles[tone]}`}>
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-white">{value}</p>
+    </div>
   )
 }
