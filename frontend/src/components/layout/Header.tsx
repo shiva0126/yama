@@ -1,12 +1,42 @@
-import { Activity, ChevronsRight, PanelLeft, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
+import { Activity, AlertTriangle, ChevronsRight, PanelLeft, ShieldCheck, Wifi, WifiOff } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import type { ReactNode } from 'react'
 import { useScanStore } from '../../stores/scanStore'
-import { overviewApi } from '../../api'
+import { defenseApi, overviewApi } from '../../api'
 
 const pageMeta: Record<string, { title: string; section: string; description: string }> = {
+  '/defense': {
+    title: 'Defense Command',
+    section: 'Defense',
+    description: 'Live incidents, catalog coverage, evidence, and policy controls.',
+  },
+  '/defense/incidents': {
+    title: 'Incident Queue',
+    section: 'Defense',
+    description: 'Correlated attack chains and containment priorities.',
+  },
+  '/defense/catalog': {
+    title: 'Attack Catalog',
+    section: 'Defense',
+    description: 'Technique families, detector coverage, and signal mapping.',
+  },
+  '/defense/response': {
+    title: 'Response Playbooks',
+    section: 'Defense',
+    description: 'Containment actions, approvals, and rollback posture.',
+  },
+  '/defense/evidence': {
+    title: 'Evidence Ledger',
+    section: 'Defense',
+    description: 'Bundles, hashes, and preserved response artifacts.',
+  },
+  '/defense/policy': {
+    title: 'Policy Controls',
+    section: 'Defense',
+    description: 'Protected scopes, exclusions, and enforcement thresholds.',
+  },
   '/overview': {
     title: 'Command Center',
     section: 'Overview',
@@ -53,10 +83,23 @@ export function Header({ collapsed, onToggle }: HeaderProps) {
   const location = useLocation()
   const { wsConnected, activeScan } = useScanStore()
   const meta = pageMeta[location.pathname] ?? pageMeta['/overview']
+  const isDefenseRoute = location.pathname.startsWith('/defense')
   const { data } = useQuery({
     queryKey: ['overview-summary'],
     queryFn: () => overviewApi.summary().then((r) => r.data),
     refetchInterval: 20_000,
+  })
+  const { data: defenseSummary } = useQuery({
+    queryKey: ['defense-summary'],
+    queryFn: () => defenseApi.summary().then((r) => r.data),
+    refetchInterval: 20_000,
+    enabled: isDefenseRoute,
+  })
+  const { data: defenseIncidents } = useQuery({
+    queryKey: ['defense-incidents'],
+    queryFn: () => defenseApi.incidents().then((r) => r.data),
+    refetchInterval: 20_000,
+    enabled: isDefenseRoute,
   })
 
   return (
@@ -102,12 +145,22 @@ export function Header({ collapsed, onToggle }: HeaderProps) {
           </div>
 
           <div className="hidden gap-2 lg:flex">
-            <HeaderStat label="Critical" value={data?.findings.critical ?? 0} tone="danger" />
-            <HeaderStat label="Reports" value={data?.reports.total ?? 0} tone="neutral" />
-            {activeScan?.status === 'running' ? (
-              <HeaderStat label="Assessment" value={`${activeScan.progress}%`} tone="info" icon={<Activity className="h-3.5 w-3.5 animate-pulse" />} />
+            {isDefenseRoute ? (
+              <>
+                <HeaderStat label="Detectors" value={defenseSummary?.detector_count ?? 0} tone="info" />
+                <HeaderStat label="Incidents" value={defenseIncidents?.length ?? 0} tone="danger" icon={<AlertTriangle className="h-3.5 w-3.5" />} />
+                <HeaderStat label="Policy" value={defenseSummary?.demo_ready_count ?? 0} tone="success" icon={<ShieldCheck className="h-3.5 w-3.5" />} />
+              </>
             ) : (
-              <HeaderStat label="State" value="Ready" tone="success" icon={<ShieldCheck className="h-3.5 w-3.5" />} />
+              <>
+                <HeaderStat label="Critical" value={data?.findings.critical ?? 0} tone="danger" />
+                <HeaderStat label="Reports" value={data?.reports.total ?? 0} tone="neutral" />
+                {activeScan?.status === 'running' ? (
+                  <HeaderStat label="Assessment" value={`${activeScan.progress}%`} tone="info" icon={<Activity className="h-3.5 w-3.5 animate-pulse" />} />
+                ) : (
+                  <HeaderStat label="State" value="Ready" tone="success" icon={<ShieldCheck className="h-3.5 w-3.5" />} />
+                )}
+              </>
             )}
           </div>
         </div>

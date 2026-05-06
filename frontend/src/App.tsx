@@ -10,6 +10,14 @@ import { Findings } from './components/Findings'
 import { Topology } from './components/Topology'
 import { Reports } from './components/Reports'
 import { Login } from './components/Login'
+import {
+  DefenseCatalog,
+  DefenseEvidence,
+  DefenseIncidents,
+  DefenseOverview,
+  DefensePolicy,
+  DefenseResponse,
+} from './components/Defense'
 import { useScanStore } from './stores/scanStore'
 
 const queryClient = new QueryClient({
@@ -45,7 +53,13 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/overview" replace />} />
+        <Route index element={<Navigate to="/defense" replace />} />
+        <Route path="defense" element={<DefenseOverview />} />
+        <Route path="defense/incidents" element={<DefenseIncidents />} />
+        <Route path="defense/catalog" element={<DefenseCatalog />} />
+        <Route path="defense/response" element={<DefenseResponse />} />
+        <Route path="defense/evidence" element={<DefenseEvidence />} />
+        <Route path="defense/policy" element={<DefensePolicy />} />
         <Route path="overview" element={<Dashboard />} />
         <Route path="dashboard" element={<Navigate to="/overview" replace />} />
         <Route path="scanner" element={<Scanner />} />
@@ -55,7 +69,7 @@ function AppRoutes() {
         <Route path="topology" element={<Topology />} />
         <Route path="reports" element={<Reports />} />
       </Route>
-      <Route path="/login" element={<Navigate to="/overview" replace />} />
+      <Route path="/login" element={<Navigate to="/defense" replace />} />
     </Routes>
   )
 }

@@ -250,6 +250,73 @@ export interface OverviewSummary {
 }
 
 // ============================================================
+// Defense Plane
+// ============================================================
+
+export interface DefenseCatalogSummary {
+  version: string
+  family_count: number
+  detector_count: number
+  critical_count: number
+  high_count: number
+  demo_ready_count: number
+  by_family: Record<string, number>
+  response_profiles: Record<string, number>
+}
+
+export interface DefenseDetection {
+  id: string
+  detector_id: string
+  title: string
+  confidence: string
+  severity: Severity
+  occurred_at: string
+  domain: string
+  source_host: string
+  actor: string
+  target: string
+  evidence_refs: string[]
+  metadata: Record<string, string>
+}
+
+export interface DefenseIncident {
+  id: string
+  title: string
+  severity: Severity
+  confidence: string
+  status: string
+  primary_actor: string
+  primary_target: string
+  opened_at: string
+  last_updated_at: string
+  detection_ids: string[]
+  response_actions: string[]
+  metadata: Record<string, string>
+}
+
+export interface DefensePolicySummary {
+  mode: string
+  protected_scopes: string[]
+  approval_thresholds: Record<string, string>
+  exclusions: string[]
+}
+
+export interface EvidenceBundleRequest {
+  incident_id: string
+  metadata: Record<string, string>
+}
+
+export interface EvidenceBundle {
+  id: string
+  incident_id: string
+  storage_key: string
+  sha256: string
+  content_type: string
+  size_bytes: number
+  metadata: Record<string, string>
+}
+
+// ============================================================
 // Agent Installation
 // ============================================================
 

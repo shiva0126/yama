@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,16 +10,42 @@ import (
 	"ad-assessment/defense-shared/catalog"
 	"ad-assessment/defense-shared/config"
 	"ad-assessment/defense-shared/events"
+	"ad-assessment/defense-shared/messaging"
 	"ad-assessment/defense-shared/server"
+	"ad-assessment/defense-shared/storage"
+	"ad-assessment/defense-shared/store"
 )
 
 func main() {
 	cfg := config.Load("correlation-engine", "8094", "9094")
+	pool, err := storage.Open(context.Background(), cfg.DBDSN)
+	if err != nil {
+		log.Fatalf("open db pool: %v", err)
+	}
+	defer pool.Close()
+
+	nc, js, err := messaging.Connect(cfg.NATSURL)
+	if err != nil {
+		log.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+	if err := messaging.EnsureDefenseStream(js); err != nil {
+		log.Fatalf("ensure stream: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.HealthHandler(cfg.ServiceName))
 	mux.HandleFunc("/incidents/demo", func(w http.ResponseWriter, _ *http.Request) {
-		server.WriteJSON(w, http.StatusOK, catalog.DemoIncidents(time.Now().UTC()))
+		incidents := catalog.DemoIncidents(time.Now().UTC())
+		for _, incident := range incidents {
+			if _, err := store.UpsertIncident(context.Background(), pool, incident); err != nil {
+				log.Printf("persist incident: %v", err)
+			}
+			if err := messaging.PublishJSON(context.Background(), js, messaging.SubjectIncidents, incident); err != nil {
+				log.Printf("publish incident: %v", err)
+			}
+		}
+		server.WriteJSON(w, http.StatusOK, incidents)
 	})
 	mux.HandleFunc("/correlate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -32,7 +59,16 @@ func main() {
 			return
 		}
 
-		server.WriteJSON(w, http.StatusOK, correlateDetections(detections))
+		incidents := correlateDetections(detections)
+		for _, incident := range incidents {
+			if _, err := store.UpsertIncident(context.Background(), pool, incident); err != nil {
+				log.Printf("persist correlated incident: %v", err)
+			}
+			if err := messaging.PublishJSON(context.Background(), js, messaging.SubjectIncidents, incident); err != nil {
+				log.Printf("publish correlated incident: %v", err)
+			}
+		}
+		server.WriteJSON(w, http.StatusOK, incidents)
 	})
 
 	log.Printf("%s listening on :%s", cfg.ServiceName, cfg.HTTPPort)

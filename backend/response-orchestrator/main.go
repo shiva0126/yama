@@ -1,17 +1,35 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 
 	"ad-assessment/defense-shared/config"
 	"ad-assessment/defense-shared/events"
+	"ad-assessment/defense-shared/messaging"
 	"ad-assessment/defense-shared/server"
+	"ad-assessment/defense-shared/storage"
+	"ad-assessment/defense-shared/store"
 )
 
 func main() {
 	cfg := config.Load("response-orchestrator", "8095", "9095")
+	pool, err := storage.Open(context.Background(), cfg.DBDSN)
+	if err != nil {
+		log.Fatalf("open db pool: %v", err)
+	}
+	defer pool.Close()
+
+	nc, js, err := messaging.Connect(cfg.NATSURL)
+	if err != nil {
+		log.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+	if err := messaging.EnsureDefenseStream(js); err != nil {
+		log.Fatalf("ensure stream: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.HealthHandler(cfg.ServiceName))
@@ -27,7 +45,16 @@ func main() {
 			return
 		}
 
-		server.WriteJSON(w, http.StatusOK, planResponse(incident))
+		actions := planResponse(incident)
+		for _, action := range actions {
+			if _, err := store.SaveResponseAction(context.Background(), pool, action); err != nil {
+				log.Printf("persist response action: %v", err)
+			}
+		}
+		if err := messaging.PublishJSON(context.Background(), js, messaging.SubjectResponsesRequested, actions); err != nil {
+			log.Printf("publish response actions: %v", err)
+		}
+		server.WriteJSON(w, http.StatusOK, actions)
 	})
 
 	log.Printf("%s listening on :%s", cfg.ServiceName, cfg.HTTPPort)

@@ -3,9 +3,11 @@ import type {
   ScanJob, ScanRequest, CollectorAgent, Finding, ScoreCard,
   ADUser, ADGroup, ADComputer, ADGPO, ADDomainController, SecurityIndicator,
   InstallRequest, InstallJob, OverviewSummary,
+  DefenseCatalogSummary, DefenseDetection, DefenseIncident, DefensePolicySummary, EvidenceBundle, EvidenceBundleRequest,
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
+const DEFENSE_BASE_URL = import.meta.env.VITE_DEFENSE_API_BASE_URL || BASE_URL
 
 const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
@@ -106,6 +108,29 @@ export const findingsApi = {
 // ============================================================
 export const overviewApi = {
   summary: () => api.get<OverviewSummary>('/overview/summary'),
+}
+
+const defenseApiClient = axios.create({
+  baseURL: `${DEFENSE_BASE_URL}`,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+defenseApiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+export const defenseApi = {
+  summary: () => defenseApiClient.get<DefenseCatalogSummary>('/catalog/summary'),
+  catalog: () => defenseApiClient.get('/catalog'),
+  detections: () => defenseApiClient.get<DefenseDetection[]>('/detections/demo'),
+  incidents: () => defenseApiClient.get<DefenseIncident[]>('/incidents/demo'),
+  policy: () => defenseApiClient.get<DefensePolicySummary>('/policy/demo'),
+  plan: (incident: DefenseIncident) => defenseApiClient.post('/plan', incident),
+  evidence: (payload: EvidenceBundleRequest) => defenseApiClient.post<EvidenceBundle>('/evidence/bundle', payload),
 }
 
 // ============================================================

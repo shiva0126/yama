@@ -1,16 +1,26 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"ad-assessment/defense-shared/config"
 	"ad-assessment/defense-shared/events"
+	"ad-assessment/defense-shared/messaging"
 	"ad-assessment/defense-shared/server"
 )
+
+type rawTelemetryBatch struct {
+	AgentID string            `json:"agent_id"`
+	Source  string            `json:"source"`
+	Count   int               `json:"count"`
+	Labels  map[string]string `json:"labels"`
+}
 
 type rawSignal struct {
 	Kind       string            `json:"kind"`
@@ -29,6 +39,25 @@ type rawSignal struct {
 
 func main() {
 	cfg := config.Load("signal-normalizer", "8092", "9092")
+	nc, js, err := messaging.Connect(cfg.NATSURL)
+	if err != nil {
+		log.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+	if err := messaging.EnsureDefenseStream(js); err != nil {
+		log.Fatalf("ensure stream: %v", err)
+	}
+	if err := messaging.StartConsumer(js, messaging.SubjectSignalsRaw, "signal-normalizer", func(data []byte) error {
+		var batch rawTelemetryBatch
+		if err := json.Unmarshal(data, &batch); err != nil {
+			return err
+		}
+
+		normalized := normalizeBatch(batch)
+		return messaging.PublishJSON(context.Background(), js, messaging.SubjectSignalsNormalized, normalized)
+	}); err != nil {
+		log.Fatalf("start consumer: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.HealthHandler(cfg.ServiceName))
@@ -45,11 +74,62 @@ func main() {
 		}
 
 		normalized := normalizeRawSignal(raw)
+		if err := messaging.PublishJSON(context.Background(), js, messaging.SubjectSignalsNormalized, normalized); err != nil {
+			log.Printf("publish normalized event: %v", err)
+		}
 		server.WriteJSON(w, http.StatusOK, normalized)
 	})
 
 	log.Printf("%s listening on :%s", cfg.ServiceName, cfg.HTTPPort)
 	log.Fatal(http.ListenAndServe(":"+cfg.HTTPPort, mux))
+}
+
+func normalizeBatch(batch rawTelemetryBatch) events.NormalizedEvent {
+	kind := batch.Labels["kind"]
+	if kind == "" {
+		kind = batch.Labels["event_kind"]
+	}
+	if kind == "" {
+		kind = inferBatchKind(batch)
+	}
+
+	attrs := map[string]string{
+		"agent_id": batch.AgentID,
+		"source":   batch.Source,
+		"count":    strconv.Itoa(batch.Count),
+	}
+	for k, v := range batch.Labels {
+		attrs[k] = v
+	}
+
+	return events.NormalizedEvent{
+		ID:          "norm-batch-" + batch.AgentID,
+		Kind:        kind,
+		OccurredAt:  time.Now().UTC(),
+		Domain:      batch.Labels["domain"],
+		SourceHost:  batch.AgentID,
+		TargetHost:  batch.Labels["target_host"],
+		Actor:       batch.Labels["actor"],
+		ActorSID:    batch.Labels["actor_sid"],
+		TargetDN:    batch.Labels["target_dn"],
+		ObjectClass: batch.Labels["object_class"],
+		Channel:     batch.Source,
+		RawRef:      batch.AgentID + ":" + batch.Source,
+		Attributes:  attrs,
+	}
+}
+
+func inferBatchKind(batch rawTelemetryBatch) string {
+	switch batch.Labels["event_id"] {
+	case "4662":
+		return "dc.replication_request"
+	case "5136":
+		return "dir.object_modify"
+	case "4769":
+		return "auth.kerberos.tgs"
+	default:
+		return "raw.signal"
+	}
 }
 
 func normalizeRawSignal(raw rawSignal) events.NormalizedEvent {

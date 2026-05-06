@@ -1,15 +1,48 @@
 import { NavLink } from 'react-router-dom'
-import { Activity, Boxes, ChevronsLeft, ChevronsRight, FileSpreadsheet, LogOut, Network, Radar, Shield, Waypoints } from 'lucide-react'
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Boxes,
+  ChevronsLeft,
+  ChevronsRight,
+  FileSpreadsheet,
+  Fingerprint,
+  Flame,
+  LogOut,
+  Network,
+  Radar,
+  Shield,
+  ShieldCheck,
+  ShieldQuestion,
+  Waypoints,
+} from 'lucide-react'
 import clsx from 'clsx'
 
-const nav = [
-  { to: '/overview', label: 'Overview', icon: Shield },
-  { to: '/scanner', label: 'Assessments', icon: Radar },
-  { to: '/findings', label: 'Exposure Queue', icon: Activity },
-  { to: '/inventory', label: 'Directory', icon: Boxes },
-  { to: '/topology', label: 'Attack Surface', icon: Waypoints },
-  { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
-  { to: '/agents', label: 'Agents', icon: Network },
+const navGroups = [
+  {
+    title: 'Defense Plane',
+    items: [
+      { to: '/defense', label: 'Defense Overview', icon: ShieldCheck },
+      { to: '/defense/incidents', label: 'Incidents', icon: AlertTriangle },
+      { to: '/defense/catalog', label: 'Attack Catalog', icon: Flame },
+      { to: '/defense/response', label: 'Response', icon: Fingerprint },
+      { to: '/defense/evidence', label: 'Evidence', icon: FileSpreadsheet },
+      { to: '/defense/policy', label: 'Policy', icon: ShieldQuestion },
+    ],
+  },
+  {
+    title: 'Assessment Plane',
+    items: [
+      { to: '/overview', label: 'Overview', icon: Shield },
+      { to: '/scanner', label: 'Assessments', icon: Radar },
+      { to: '/findings', label: 'Exposure Queue', icon: Activity },
+      { to: '/inventory', label: 'Directory', icon: Boxes },
+      { to: '/topology', label: 'Attack Surface', icon: Waypoints },
+      { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
+      { to: '/agents', label: 'Agents', icon: Network },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -56,46 +89,49 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </div>
 
       <div className={clsx('flex-1 overflow-y-auto py-5', collapsed ? 'px-3' : 'px-4')}>
-        {!collapsed && (
-          <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400/70">Navigation</p>
-        )}
-
-        <nav className={clsx('space-y-1.5', collapsed ? 'mt-0' : 'mt-3')}>
-          {nav.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              title={collapsed ? label : undefined}
-              className={({ isActive }) =>
-                clsx(
-                  'group flex items-center rounded-2xl border transition',
-                  collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-3.5',
-                  isActive
-                    ? 'border-sky-300/25 bg-sky-400/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_10px_24px_rgba(2,132,199,0.08)]'
-                    : 'border-transparent hover:border-white/8 hover:bg-white/[0.04]'
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <div
-                    className={clsx(
-                      'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition',
-                      isActive
-                        ? 'border-sky-300/24 bg-white text-sky-700'
-                        : 'border-white/8 bg-white/[0.03] text-slate-500 group-hover:text-slate-200'
-                    )}
+        <nav className={clsx('space-y-5', collapsed ? 'mt-0' : 'mt-3')}>
+          {navGroups.map((group) => (
+            <div key={group.title} className="space-y-2">
+              {!collapsed && <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400/70">{group.title}</p>}
+              <div className="space-y-1.5">
+                {group.items.map(({ to, label, icon: Icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    title={collapsed ? label : undefined}
+                    className={({ isActive }) =>
+                      clsx(
+                        'group flex items-center rounded-2xl border transition',
+                        collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-3.5',
+                        isActive
+                          ? 'border-sky-300/25 bg-sky-400/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_10px_24px_rgba(2,132,199,0.08)]'
+                          : 'border-transparent hover:border-white/8 hover:bg-white/[0.04]'
+                      )
+                    }
                   >
-                    <Icon className="h-[18px] w-[18px]" />
-                  </div>
-                  {!collapsed && (
-                    <div className="min-w-0">
-                      <p className={clsx('text-sm font-semibold', isActive ? 'text-white' : 'text-slate-300')}>{label}</p>
-                    </div>
-                  )}
-                </>
-              )}
-            </NavLink>
+                    {({ isActive }) => (
+                      <>
+                        <div
+                          className={clsx(
+                            'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition',
+                            isActive
+                              ? 'border-sky-300/24 bg-white text-sky-700'
+                              : 'border-white/8 bg-white/[0.03] text-slate-500 group-hover:text-slate-200'
+                          )}
+                        >
+                          <Icon className="h-[18px] w-[18px]" />
+                        </div>
+                        {!collapsed && (
+                          <div className="min-w-0">
+                            <p className={clsx('text-sm font-semibold', isActive ? 'text-white' : 'text-slate-300')}>{label}</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
       </div>

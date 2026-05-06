@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,11 +11,28 @@ import (
 
 	"ad-assessment/defense-shared/config"
 	"ad-assessment/defense-shared/events"
+	"ad-assessment/defense-shared/messaging"
 	"ad-assessment/defense-shared/server"
+	"ad-assessment/defense-shared/storage"
+	"ad-assessment/defense-shared/store"
 )
 
 func main() {
 	cfg := config.Load("evidence-ledger", "8096", "9096")
+	pool, err := storage.Open(context.Background(), cfg.DBDSN)
+	if err != nil {
+		log.Fatalf("open db pool: %v", err)
+	}
+	defer pool.Close()
+
+	nc, js, err := messaging.Connect(cfg.NATSURL)
+	if err != nil {
+		log.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+	if err := messaging.EnsureDefenseStream(js); err != nil {
+		log.Fatalf("ensure stream: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.HealthHandler(cfg.ServiceName))
@@ -30,7 +48,14 @@ func main() {
 			return
 		}
 
-		server.WriteJSON(w, http.StatusOK, finalizeBundle(bundle))
+		finalized := finalizeBundle(bundle)
+		if _, err := store.SaveEvidenceBundle(context.Background(), pool, finalized); err != nil {
+			log.Printf("persist evidence bundle: %v", err)
+		}
+		if err := messaging.PublishJSON(context.Background(), js, messaging.SubjectEvidenceEvents, finalized); err != nil {
+			log.Printf("publish evidence bundle: %v", err)
+		}
+		server.WriteJSON(w, http.StatusOK, finalized)
 	})
 
 	log.Printf("%s listening on :%s", cfg.ServiceName, cfg.HTTPPort)

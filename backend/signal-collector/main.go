@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
 	"ad-assessment/defense-shared/config"
+	"ad-assessment/defense-shared/messaging"
 	"ad-assessment/defense-shared/server"
 )
 
@@ -19,6 +21,14 @@ type telemetryBatch struct {
 
 func main() {
 	cfg := config.Load("signal-collector", "8091", "9091")
+	nc, js, err := messaging.Connect(cfg.NATSURL)
+	if err != nil {
+		log.Fatalf("connect nats: %v", err)
+	}
+	defer nc.Close()
+	if err := messaging.EnsureDefenseStream(js); err != nil {
+		log.Fatalf("ensure stream: %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.HealthHandler(cfg.ServiceName))
@@ -34,6 +44,9 @@ func main() {
 			return
 		}
 
+		if err := messaging.PublishJSON(context.Background(), js, messaging.SubjectSignalsRaw, batch); err != nil {
+			log.Printf("publish raw batch: %v", err)
+		}
 		server.WriteJSON(w, http.StatusAccepted, map[string]any{
 			"status":      "accepted",
 			"received_at": time.Now().UTC(),
