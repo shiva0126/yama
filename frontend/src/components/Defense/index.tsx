@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import {
@@ -37,6 +37,9 @@ export function DefenseOverview() {
     queryFn: () => defenseApi.detections().then((r) => r.data),
     refetchInterval: 20_000,
   })
+  const summaryLoading = summary === undefined
+  const incidentsLoading = incidents === undefined
+  const detectionsLoading = detections === undefined
 
   const criticalIncident = incidents?.[0]
   const topDetector = detections?.[0]
@@ -54,17 +57,17 @@ export function DefenseOverview() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Kpi label="Detectors" value={summary?.detector_count ?? 0} icon={<Flame className="h-4 w-4" />} />
-            <Kpi label="Demo ready" value={summary?.demo_ready_count ?? 0} icon={<ShieldCheck className="h-4 w-4" />} />
-            <Kpi label="Critical" value={summary?.critical_count ?? 0} icon={<ShieldAlert className="h-4 w-4" />} />
-            <Kpi label="Incidents" value={incidents?.length ?? 0} icon={<CircleAlert className="h-4 w-4" />} />
+            <Kpi label="Detectors" value={summaryLoading ? 'Loading' : (summary?.detector_count ?? 0)} icon={<Flame className="h-4 w-4" />} />
+            <Kpi label="Demo ready" value={summaryLoading ? 'Loading' : (summary?.demo_ready_count ?? 0)} icon={<ShieldCheck className="h-4 w-4" />} />
+            <Kpi label="Critical" value={summaryLoading ? 'Loading' : (summary?.critical_count ?? 0)} icon={<ShieldAlert className="h-4 w-4" />} />
+            <Kpi label="Incidents" value={incidentsLoading ? 'Loading' : (incidents?.length ?? 0)} icon={<CircleAlert className="h-4 w-4" />} />
           </div>
         </div>
 
         <div className="grid gap-4 px-6 py-6 md:grid-cols-3">
-          <StatCard label="Active campaign" value={criticalIncident?.title ?? 'No active incident'} detail={criticalIncident?.metadata.story ?? 'Awaiting defense telemetry'} />
-          <StatCard label="Latest detector" value={topDetector?.title ?? '—'} detail={topDetector ? `${topDetector.actor} -> ${topDetector.target}` : 'No detections yet'} />
-          <StatCard label="Coverage family" value={Object.entries(summary?.by_family ?? {})[0]?.[0] ?? '—'} detail="Most populated detector family in the seed catalog" />
+          <StatCard label="Active campaign" value={summaryLoading ? 'Loading' : (criticalIncident?.title ?? 'No active incident')} detail={criticalIncident?.metadata.story ?? 'Awaiting defense telemetry'} />
+          <StatCard label="Latest detector" value={detectionsLoading ? 'Loading' : (topDetector?.title ?? '—')} detail={topDetector ? `${topDetector.actor} -> ${topDetector.target}` : 'No detections yet'} />
+          <StatCard label="Coverage family" value={summaryLoading ? 'Loading' : (Object.entries(summary?.by_family ?? {})[0]?.[0] ?? '—')} detail="Most populated detector family in the seed catalog" />
         </div>
       </section>
 
@@ -75,7 +78,12 @@ export function DefenseOverview() {
             <h3 className="mt-1 text-lg font-semibold text-slate-950">Correlated attack chains</h3>
           </div>
           <div className="divide-y divide-slate-200/80">
-            {(incidents ?? []).map((incident) => (
+            {incidentsLoading ? (
+              <div className="px-6 py-10 text-sm text-slate-500">Loading incident queue…</div>
+            ) : (incidents ?? []).length === 0 ? (
+              <div className="px-6 py-10 text-sm text-slate-500">No correlated incidents yet.</div>
+            ) : (
+              (incidents ?? []).map((incident) => (
               <div key={incident.id} className="px-6 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -96,7 +104,8 @@ export function DefenseOverview() {
                   ))}
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -132,6 +141,8 @@ export function DefenseCatalog() {
     queryKey: ['defense-catalog'],
     queryFn: () => defenseApi.catalog().then((r) => r.data),
   })
+  const summaryLoading = summary === undefined
+  const catalogLoading = catalog === undefined
 
   const families = Object.entries(summary?.by_family ?? {}).sort((a, b) => b[1] - a[1])
   const responseProfiles = Object.entries(summary?.response_profiles ?? {}).sort((a, b) => b[1] - a[1])
@@ -151,7 +162,12 @@ export function DefenseCatalog() {
         <div className="panel p-6">
           <p className="label">Family spread</p>
           <div className="mt-4 space-y-3">
-            {families.map(([family, count]) => (
+            {summaryLoading ? (
+              <div className="text-sm text-slate-500">Loading catalog…</div>
+            ) : families.length === 0 ? (
+              <div className="text-sm text-slate-500">No detector families available yet.</div>
+            ) : (
+              families.map(([family, count]) => (
               <div key={family}>
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium text-slate-950">{family}</span>
@@ -161,17 +177,24 @@ export function DefenseCatalog() {
                   <div className="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-400" style={{ width: `${Math.max(12, (count / (summary?.detector_count || 1)) * 100)}%` }} />
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
 
           <div className="mt-6">
             <p className="label">Response profiles</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {responseProfiles.map(([profile, count]) => (
-                <span key={profile} className="chip">
-                  {profile} · {count}
-                </span>
-              ))}
+              {summaryLoading ? (
+                <span className="text-sm text-slate-500">Loading response profiles…</span>
+              ) : responseProfiles.length === 0 ? (
+                <span className="text-sm text-slate-500">No response profiles available yet.</span>
+              ) : (
+                responseProfiles.map(([profile, count]) => (
+                  <span key={profile} className="chip">
+                    {profile} · {count}
+                  </span>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -182,7 +205,12 @@ export function DefenseCatalog() {
             <h3 className="mt-1 text-lg font-semibold text-slate-950">First production-priority coverage</h3>
           </div>
           <div className="divide-y divide-slate-200/80">
-            {detectors.map((detector: any) => (
+            {catalogLoading ? (
+              <div className="px-6 py-10 text-sm text-slate-500">Loading detector list…</div>
+            ) : detectors.length === 0 ? (
+              <div className="px-6 py-10 text-sm text-slate-500">No detectors available yet.</div>
+            ) : (
+              detectors.map((detector: any) => (
               <div key={detector.id} className="px-6 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -200,7 +228,8 @@ export function DefenseCatalog() {
                   ))}
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </section>
@@ -221,6 +250,11 @@ export function DefenseIncidents() {
   })
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!selectedId && incidents?.[0]?.id) {
+      setSelectedId(incidents[0].id)
+    }
+  }, [incidents, selectedId])
   const selected = incidents?.find((item) => item.id === selectedId) ?? incidents?.[0] ?? null
   const selectedDetections = useMemo(
     () => (detections ?? []).filter((d) => selected?.detection_ids.includes(d.id)),
@@ -240,7 +274,12 @@ export function DefenseIncidents() {
           <h2 className="mt-1 text-lg font-semibold text-slate-950">Defense queue</h2>
         </div>
         <div className="divide-y divide-slate-200/80">
-          {(incidents ?? []).map((incident) => (
+          {incidents === undefined ? (
+            <div className="px-6 py-10 text-sm text-slate-500">Loading incidents…</div>
+          ) : incidents.length === 0 ? (
+            <div className="px-6 py-10 text-sm text-slate-500">No incidents available yet.</div>
+          ) : (
+            incidents.map((incident) => (
             <button
               key={incident.id}
               onClick={() => setSelectedId(incident.id)}
@@ -256,7 +295,8 @@ export function DefenseIncidents() {
                 </span>
               </div>
             </button>
-          ))}
+            ))
+          )}
         </div>
       </section>
 
@@ -317,6 +357,7 @@ export function DefenseResponse() {
     queryKey: ['defense-incidents'],
     queryFn: () => defenseApi.incidents().then((r) => r.data),
   })
+  const incidentsLoading = incidents === undefined
 
   const playbooks = [
     { title: 'Contain account', detail: 'Disable or quarantine a suspicious actor account after review.' },
@@ -350,7 +391,12 @@ export function DefenseResponse() {
           <h3 className="mt-1 text-lg font-semibold text-slate-950">Incident-based response suggestions</h3>
         </div>
         <div className="divide-y divide-slate-200/80">
-          {(incidents ?? []).map((incident) => (
+          {incidentsLoading ? (
+            <div className="px-6 py-10 text-sm text-slate-500">Loading response plans…</div>
+          ) : incidents.length === 0 ? (
+            <div className="px-6 py-10 text-sm text-slate-500">No incidents to plan against.</div>
+          ) : (
+            incidents.map((incident) => (
             <div key={incident.id} className="px-6 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -365,7 +411,8 @@ export function DefenseResponse() {
                 ))}
               </div>
             </div>
-          ))}
+            ))
+          )}
         </div>
       </section>
     </div>
@@ -382,7 +429,13 @@ export function DefenseEvidence() {
     queryKey: ['defense-summary'],
     queryFn: () => defenseApi.summary().then((r) => r.data),
   })
-  const [selectedIncidentId, setSelectedIncidentId] = useState(incidents?.[0]?.id ?? '')
+  const [selectedIncidentId, setSelectedIncidentId] = useState('')
+
+  useEffect(() => {
+    if (!selectedIncidentId && incidents?.[0]?.id) {
+      setSelectedIncidentId(incidents[0].id)
+    }
+  }, [incidents, selectedIncidentId])
 
   const createBundle = useMutation({
     mutationFn: () =>
@@ -410,16 +463,18 @@ export function DefenseEvidence() {
 
         <div className="mt-5 space-y-3">
           <label className="label">Target incident</label>
-          <select value={selectedIncidentId} onChange={(e) => setSelectedIncidentId(e.target.value)} className="select">
+          <select value={selectedIncidentId} onChange={(e) => setSelectedIncidentId(e.target.value)} className="select" disabled={!incidents || incidents.length === 0}>
             {(incidents ?? []).map((incident) => (
               <option key={incident.id} value={incident.id}>
                 {incident.title}
               </option>
             ))}
           </select>
+          {incidents === undefined ? <p className="text-sm text-slate-500">Loading incidents…</p> : null}
+          {incidents?.length === 0 ? <p className="text-sm text-slate-500">No incidents available yet.</p> : null}
         </div>
 
-        <button onClick={() => createBundle.mutate()} className="btn-primary mt-5">
+        <button onClick={() => createBundle.mutate()} className="btn-primary mt-5" disabled={!selectedIncidentId && !incidents?.[0]?.id}>
           <Package className="h-4 w-4" />
           Create evidence bundle
         </button>
@@ -447,6 +502,7 @@ export function DefensePolicy() {
     queryFn: () => defenseApi.policy().then((r) => r.data),
     refetchInterval: 20_000,
   })
+  const policyLoading = data === undefined
 
   return (
     <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -458,23 +514,29 @@ export function DefensePolicy() {
         </p>
 
         <div className="mt-5 space-y-3">
-          <InfoBox title="Mode" detail={data?.mode ?? 'production-safe'} />
-          <InfoBox title="Protected scopes" detail={(data?.protected_scopes ?? []).join(', ')} />
-          <InfoBox title="Exclusions" detail={(data?.exclusions ?? []).join(', ')} />
+          <InfoBox title="Mode" detail={policyLoading ? 'Loading policy…' : (data?.mode ?? 'production-safe')} />
+          <InfoBox title="Protected scopes" detail={policyLoading ? 'Loading protected scopes…' : ((data?.protected_scopes ?? []).length ? (data?.protected_scopes ?? []).join(', ') : '—')} />
+          <InfoBox title="Exclusions" detail={policyLoading ? 'Loading exclusions…' : ((data?.exclusions ?? []).length ? (data?.exclusions ?? []).join(', ') : '—')} />
         </div>
       </section>
 
       <section className="panel p-6">
         <p className="label">Thresholds</p>
         <div className="mt-4 grid gap-3">
-          {Object.entries(data?.approval_thresholds ?? {}).map(([action, threshold]) => (
-            <div key={action} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-slate-950">{action}</p>
-                <span className="chip uppercase">{threshold}</span>
+          {policyLoading ? (
+            <div className="text-sm text-slate-500">Loading thresholds…</div>
+          ) : Object.entries(data?.approval_thresholds ?? {}).length === 0 ? (
+            <div className="text-sm text-slate-500">No approval thresholds configured yet.</div>
+          ) : (
+            Object.entries(data?.approval_thresholds ?? {}).map(([action, threshold]) => (
+              <div key={action} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-950">{action}</p>
+                  <span className="chip uppercase">{threshold}</span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </section>
     </div>

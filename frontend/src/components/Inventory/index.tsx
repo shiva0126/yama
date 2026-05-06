@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Boxes, FileCode2, Monitor, Server, Shield, Users } from 'lucide-react'
 import clsx from 'clsx'
@@ -29,17 +29,23 @@ export function Inventory() {
   })
 
   const completedScans = scansData?.scans?.filter((scan) => scan.status === 'completed') ?? []
+  const scansLoading = scansData === undefined
+  useEffect(() => {
+    if (!selectedSnapshot && completedScans[0]?.snapshot_id) {
+      setSelectedSnapshot(completedScans[0].snapshot_id)
+    }
+  }, [completedScans, selectedSnapshot])
   const snapshotId = selectedSnapshot || completedScans[0]?.snapshot_id || ''
   const currentRun = completedScans.find((scan) => scan.snapshot_id === snapshotId) ?? completedScans[0]
 
   const summary = useMemo(
     () => [
-      { label: 'Protection index', value: currentRun?.overall_score ?? '—' },
-      { label: 'Critical findings', value: currentRun?.critical_count ?? 0 },
-      { label: 'Total findings', value: currentRun?.total_findings ?? 0 },
-      { label: 'Assessment date', value: currentRun?.completed_at ? new Date(currentRun.completed_at).toLocaleDateString() : '—' },
+      { label: 'Protection index', value: scansLoading ? 'Loading' : currentRun?.overall_score ?? '—' },
+      { label: 'Critical findings', value: scansLoading ? 'Loading' : currentRun?.critical_count ?? 0 },
+      { label: 'Total findings', value: scansLoading ? 'Loading' : currentRun?.total_findings ?? 0 },
+      { label: 'Assessment date', value: scansLoading ? 'Loading' : currentRun?.completed_at ? new Date(currentRun.completed_at).toLocaleDateString() : '—' },
     ],
-    [currentRun]
+    [currentRun, scansLoading]
   )
 
   return (
@@ -51,7 +57,14 @@ export function Inventory() {
             <h2 className="mt-2 text-2xl font-semibold text-white">Directory state</h2>
           </div>
 
-          {completedScans.length > 0 && (
+          {scansLoading ? (
+            <div className="min-w-[280px]">
+              <label className="label">Assessment snapshot</label>
+              <div className="mt-2 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-sm text-slate-500">
+                Loading assessments…
+              </div>
+            </div>
+          ) : completedScans.length > 0 && (
             <div className="min-w-[280px]">
               <label className="label">Assessment snapshot</label>
               <select value={selectedSnapshot} onChange={(e) => setSelectedSnapshot(e.target.value)} className="select mt-2">
@@ -110,7 +123,9 @@ export function Inventory() {
       {!snapshotId ? (
         <div className="panel p-12 text-center">
           <Boxes className="mx-auto h-10 w-10 text-slate-600" />
-          <p className="mt-4 text-sm font-medium text-slate-300">No assessment data available.</p>
+          <p className="mt-4 text-sm font-medium text-slate-300">
+            {scansLoading ? 'Loading assessment data…' : 'No completed assessment data available yet.'}
+          </p>
         </div>
       ) : (
         <section className="panel overflow-hidden">

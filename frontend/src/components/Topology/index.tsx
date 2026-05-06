@@ -21,6 +21,7 @@ export function Topology() {
 
   const latestScan = scansData?.scans?.find((scan) => scan.status === 'completed')
   const snapshotId = latestScan?.snapshot_id
+  const scansLoading = scansData === undefined
 
   const { data: topologyData } = useQuery({
     queryKey: ['topology', snapshotId],
@@ -39,6 +40,7 @@ export function Topology() {
   }, [setEdges, setNodes, topologyData])
 
   const summary = topologyData?.summary
+  const topologyLoading = topologyData === undefined && !!snapshotId
   const sites: any[] = topologyData?.sites ?? []
   const machineAccountQuota: number = topologyData?.machine_account_quota ?? 0
   const recycleBinEnabled: boolean = topologyData?.recycle_bin_enabled ?? false
@@ -59,30 +61,32 @@ export function Topology() {
         <p className="label">Forest topology</p>
         <h2 className="mt-2 text-2xl font-semibold text-white">Topology</h2>
 
-        {summary && (
+        {topologyLoading ? (
+          <p className="mt-4 text-sm text-slate-400">Loading topology data…</p>
+        ) : summary ? (
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <SummaryCard icon={Server} label="Domain controllers" value={summary.dc_count} />
             <SummaryCard icon={Users} label="User identities" value={summary.user_count} />
             <SummaryCard icon={Network} label="Computer objects" value={summary.computer_count} />
             <SummaryCard icon={Shield} label="Security groups" value={summary.group_count} />
           </div>
-        )}
+        ) : null}
       </section>
 
       <section className="flex flex-wrap gap-3">
         <RiskBadge
-          label={`Machine account quota: ${machineAccountQuota}`}
-          tone={machineAccountQuota > 0 ? 'danger' : 'success'}
+          label={scansLoading ? 'Machine account quota: loading' : `Machine account quota: ${machineAccountQuota}`}
+          tone={scansLoading ? 'neutral' : machineAccountQuota > 0 ? 'danger' : 'success'}
         />
         <RiskBadge
-          label={`Recycle Bin: ${recycleBinEnabled ? 'enabled' : 'disabled'}`}
-          tone={recycleBinEnabled ? 'success' : 'warning'}
+          label={scansLoading ? 'Recycle Bin: loading' : `Recycle Bin: ${recycleBinEnabled ? 'enabled' : 'disabled'}`}
+          tone={scansLoading ? 'neutral' : recycleBinEnabled ? 'success' : 'warning'}
         />
         <RiskBadge
-          label={`Vulnerable ADCS templates: ${vulnerableTemplates}`}
-          tone={vulnerableTemplates > 0 ? 'danger' : 'neutral'}
+          label={scansLoading ? 'Vulnerable ADCS templates: loading' : `Vulnerable ADCS templates: ${vulnerableTemplates}`}
+          tone={scansLoading ? 'neutral' : vulnerableTemplates > 0 ? 'danger' : 'neutral'}
         />
-        <RiskBadge label={`Sites mapped: ${sites.length}`} tone="neutral" />
+        <RiskBadge label={scansLoading ? 'Sites mapped: loading' : `Sites mapped: ${sites.length}`} tone="neutral" />
       </section>
 
       <section className="panel overflow-hidden">
@@ -91,8 +95,10 @@ export function Topology() {
           <h3 className="mt-1 text-lg font-semibold text-white">Forest and controller map</h3>
         </div>
         <div className="h-[620px]">
-          {!snapshotId ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-500">No topology data available.</div>
+          {scansLoading ? (
+            <div className="flex h-full items-center justify-center text-sm text-slate-500">Loading assessment snapshots…</div>
+          ) : !snapshotId ? (
+            <div className="flex h-full items-center justify-center text-sm text-slate-500">No completed assessment data available.</div>
           ) : (
             <ReactFlow
               nodes={nodes}

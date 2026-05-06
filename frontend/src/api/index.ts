@@ -7,7 +7,7 @@ import type {
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const DEFENSE_BASE_URL = import.meta.env.VITE_DEFENSE_API_BASE_URL || BASE_URL
+const DEFENSE_BASE_URL = import.meta.env.VITE_DEFENSE_API_BASE_URL || '/defense-api'
 
 const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,

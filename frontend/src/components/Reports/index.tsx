@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { CheckCircle2, Download, FileCode2, FileJson2, FileText, Loader2, RefreshCw } from 'lucide-react'
@@ -39,8 +39,15 @@ export function Reports() {
   })
 
   const completedScans = scansData?.scans?.filter((scan) => scan.status === 'completed') ?? []
+  const scansLoading = scansData === undefined
   const reports = reportsData?.reports ?? []
   const selectedScanObject = completedScans.find((scan) => scan.id === selectedScan)
+
+  useEffect(() => {
+    if (!selectedScan && completedScans[0]?.id) {
+      setSelectedScan(completedScans[0].id)
+    }
+  }, [completedScans, selectedScan])
 
   const generate = useMutation({
     mutationFn: () => reportsApi.generate(selectedScan, format).then((r) => r.data),
@@ -97,8 +104,8 @@ export function Reports() {
           <div className="mt-5 space-y-5">
             <div>
               <label className="label">Assessment run</label>
-              <select value={selectedScan} onChange={(e) => setSelectedScan(e.target.value)} className="select mt-2">
-                <option value="">Select completed run</option>
+              <select value={selectedScan} onChange={(e) => setSelectedScan(e.target.value)} className="select mt-2" disabled={scansLoading}>
+                <option value="">{scansLoading ? 'Loading completed runs…' : 'Select completed run'}</option>
                 {completedScans.map((scan) => (
                   <option key={scan.id} value={scan.id}>
                     {scan.domain} · {scan.completed_at ? new Date(scan.completed_at).toLocaleDateString() : 'Pending'}
@@ -156,7 +163,7 @@ export function Reports() {
               </div>
             </div>
 
-            <button disabled={!selectedScan || generate.isPending} onClick={() => generate.mutate()} className="btn-primary">
+            <button disabled={!selectedScan || generate.isPending || scansLoading} onClick={() => generate.mutate()} className="btn-primary">
               {generate.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               Generate and download
             </button>

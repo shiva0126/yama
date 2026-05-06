@@ -28,6 +28,7 @@ export function Dashboard() {
   const recentScans = data?.scans.recent ?? []
   const recentReports = data?.reports.recent ?? []
   const topFindings = data?.findings.top ?? []
+  const metricsLoading = isLoading || data === undefined
 
   return (
     <div className="space-y-6">
@@ -46,29 +47,29 @@ export function Dashboard() {
             <MetricCard
               icon={ShieldCheck}
               title="Protection index"
-              value={latestScan?.overall_score ?? '—'}
-              detail={latestScan?.completed_at ? `Last completed ${formatDistanceToNow(new Date(latestScan.completed_at), { addSuffix: true })}` : 'No completed assessment yet'}
+              value={metricsLoading ? 'Loading' : (latestScan?.overall_score ?? '—')}
+              detail={metricsLoading ? 'Loading assessment summary…' : (latestScan?.completed_at ? `Last completed ${formatDistanceToNow(new Date(latestScan.completed_at), { addSuffix: true })}` : 'No completed assessment yet')}
             />
             <MetricCard
               icon={ShieldAlert}
               title="Critical exposures"
-              value={data?.findings.critical ?? 0}
-              detail={`${data?.findings.new ?? 0} new since the latest scan`}
+              value={metricsLoading ? 'Loading' : (data?.findings.critical ?? 0)}
+              detail={metricsLoading ? 'Loading exposure counts…' : `${data?.findings.new ?? 0} new since the latest scan`}
               tone="danger"
             />
             <MetricCard
               icon={BrainCircuit}
               title="Coverage"
-              value={data?.findings.coverage.percentage ?? 0}
+              value={metricsLoading ? 'Loading' : (data?.findings.coverage.percentage ?? 0)}
               suffix="%"
-              detail={`${data?.findings.coverage.covered ?? 0}/${data?.findings.coverage.total ?? 0} indicators hit`}
+              detail={metricsLoading ? 'Loading coverage data…' : `${data?.findings.coverage.covered ?? 0}/${data?.findings.coverage.total ?? 0} indicators hit`}
               tone="info"
             />
             <MetricCard
               icon={Workflow}
               title="Collectors online"
-              value={data?.collectors.online ?? 0}
-              detail={`${data?.collectors.stale ?? 0} stale / ${data?.collectors.offline ?? 0} offline`}
+              value={metricsLoading ? 'Loading' : (data?.collectors.online ?? 0)}
+              detail={metricsLoading ? 'Loading collector health…' : `${data?.collectors.stale ?? 0} stale / ${data?.collectors.offline ?? 0} offline`}
               tone="success"
             />
           </div>
@@ -80,7 +81,7 @@ export function Dashboard() {
               <p className="label">Operational state</p>
               <h3 className="mt-2 text-xl font-semibold text-slate-950">Current assessment posture</h3>
               <p className="mt-1 text-sm text-slate-600">
-                {latestScan?.domain ?? 'No active domain'} {latestScan?.completed_at ? `• ${format(new Date(latestScan.completed_at), 'MMM d, yyyy HH:mm')}` : ''}
+                {metricsLoading ? 'Loading current posture…' : `${latestScan?.domain ?? 'No active domain'} ${latestScan?.completed_at ? `• ${format(new Date(latestScan.completed_at), 'MMM d, yyyy HH:mm')}` : ''}`}
               </p>
             </div>
             <button onClick={() => navigate('/scanner')} className="btn-secondary">
@@ -100,14 +101,20 @@ export function Dashboard() {
             <p className="label">Leadership view</p>
             <div className="mt-3 flex items-end justify-between gap-4">
               <div>
-                <p className="text-5xl font-semibold tracking-tight text-slate-950">{latestScan?.overall_score ?? '—'}</p>
-                <p className="mt-2 text-sm text-slate-600">Protection index for the most recent completed assessment</p>
+                <p className="text-5xl font-semibold tracking-tight text-slate-950">{metricsLoading ? 'Loading' : (latestScan?.overall_score ?? '—')}</p>
+                <p className="mt-2 text-sm text-slate-600">
+                  {metricsLoading ? 'Loading leadership summary…' : 'Protection index for the most recent completed assessment'}
+                </p>
               </div>
               <div className="text-right">
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Latest report</p>
-                <p className="mt-1 text-sm font-medium text-slate-900">{recentReports[0]?.domain ?? '—'}</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">{metricsLoading ? 'Loading' : (recentReports[0]?.domain ?? '—')}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {recentReports[0]?.generated_at ? formatDistanceToNow(new Date(recentReports[0].generated_at), { addSuffix: true }) : 'No report generated yet'}
+                  {metricsLoading
+                    ? 'Loading report history…'
+                    : recentReports[0]?.generated_at
+                      ? formatDistanceToNow(new Date(recentReports[0].generated_at), { addSuffix: true })
+                      : 'No report generated yet'}
                 </p>
               </div>
             </div>
@@ -117,7 +124,7 @@ export function Dashboard() {
 
       <section className="grid gap-6 2xl:grid-cols-[1.15fr_0.85fr]">
         <div className="panel overflow-hidden">
-          <div className="flex items-center justify-between border-b border-slate-200/80 px-6 py-4">
+            <div className="flex items-center justify-between border-b border-slate-200/80 px-6 py-4">
             <div>
               <p className="label">Analyst queue</p>
               <h3 className="mt-1 text-lg font-semibold text-slate-950">Top exposures requiring review</h3>
@@ -182,20 +189,26 @@ export function Dashboard() {
               </span>
             </div>
             <div className="mt-5 space-y-3">
-              {(data?.collectors.recent ?? []).map((agent) => (
-                <div key={agent.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-950">{agent.name}</p>
-                      <p className="mt-1 text-xs text-slate-600">{agent.hostname} · {agent.domain}</p>
+              {metricsLoading ? (
+                <p className="text-sm text-slate-500">Loading collector inventory…</p>
+              ) : (data?.collectors.recent ?? []).length === 0 ? (
+                <p className="text-sm text-slate-500">No collectors registered yet.</p>
+              ) : (
+                (data?.collectors.recent ?? []).map((agent) => (
+                  <div key={agent.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-950">{agent.name}</p>
+                        <p className="mt-1 text-xs text-slate-600">{agent.hostname} · {agent.domain}</p>
+                      </div>
+                      <span className="chip capitalize">{agent.status}</span>
                     </div>
-                    <span className="chip capitalize">{agent.status}</span>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Last seen {agent.last_seen ? formatDistanceToNow(new Date(agent.last_seen), { addSuffix: true }) : 'unknown'}
+                    </p>
                   </div>
-                  <p className="mt-2 text-xs text-slate-500">
-                    Last seen {agent.last_seen ? formatDistanceToNow(new Date(agent.last_seen), { addSuffix: true }) : 'unknown'}
-                  </p>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 
@@ -212,9 +225,15 @@ export function Dashboard() {
             </div>
 
             <div className="mt-5 space-y-3">
-              {recentScans.slice(0, 4).map((scan) => (
-                <ScanItem key={scan.id} scan={scan} />
-              ))}
+              {metricsLoading ? (
+                <p className="text-sm text-slate-500">Loading recent assessments…</p>
+              ) : recentScans.length === 0 ? (
+                <p className="text-sm text-slate-500">No assessments have been executed yet.</p>
+              ) : (
+                recentScans.slice(0, 4).map((scan) => (
+                  <ScanItem key={scan.id} scan={scan} />
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -235,7 +254,9 @@ export function Dashboard() {
           <p className="label">Reports</p>
           <h3 className="mt-2 text-lg font-semibold text-slate-950">Latest evidence packages</h3>
           <div className="mt-5 space-y-3">
-            {recentReports.length === 0 ? (
+            {metricsLoading ? (
+              <p className="text-sm text-slate-500">Loading reports…</p>
+            ) : recentReports.length === 0 ? (
               <p className="text-sm text-slate-500">No reports generated yet.</p>
             ) : (
               recentReports.slice(0, 4).map((report) => (

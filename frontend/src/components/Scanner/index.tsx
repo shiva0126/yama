@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Loader2, Play, Radar, StopCircle } from 'lucide-react'
 import clsx from 'clsx'
@@ -43,6 +43,14 @@ export function Scanner() {
     refetchInterval: 5000,
   })
 
+  useEffect(() => {
+    const firstAgent = agentsData?.agents?.[0]
+    if (!selectedAgent && firstAgent) {
+      setSelectedAgent(firstAgent.id)
+      setDomain(firstAgent.domain)
+    }
+  }, [agentsData, selectedAgent])
+
   const createScan = useMutation({
     mutationFn: () =>
       scansApi
@@ -65,6 +73,8 @@ export function Scanner() {
 
   const agents = agentsData?.agents ?? []
   const scans = scansData?.scans ?? []
+  const agentsLoading = agentsData === undefined
+  const scansLoading = scansData === undefined
   const completedScans = scans.filter((scan) => scan.status === 'completed')
   const coverageSummary = useMemo(() => {
     const count = runFullAssessment ? taskCatalog.length : selectedTasks.length
@@ -140,8 +150,9 @@ export function Scanner() {
                   if (agent) setDomain(agent.domain)
                 }}
                 className="select mt-2"
+                disabled={agentsLoading}
               >
-                <option value="">Select collector</option>
+                <option value="">{agentsLoading ? 'Loading collectors…' : 'Select collector'}</option>
                 {agents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
                     {agent.name} · {agent.hostname} · {agent.status}
@@ -203,13 +214,17 @@ export function Scanner() {
             </div>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <button disabled={!canStart || createScan.isPending} onClick={() => createScan.mutate()} className="btn-primary">
-              {createScan.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              Start assessment
-            </button>
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <button disabled={!canStart || createScan.isPending} onClick={() => createScan.mutate()} className="btn-primary">
+                {createScan.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                Start assessment
+              </button>
             <span className="text-sm text-slate-500">
-              {canStart ? 'Assessment configuration is complete.' : 'Select an agent and target domain to begin.'}
+              {agentsLoading || scansLoading
+                ? 'Loading assessment context…'
+                : canStart
+                  ? 'Assessment configuration is complete.'
+                  : 'Select an agent and target domain to begin.'}
             </span>
           </div>
         </div>
@@ -218,7 +233,9 @@ export function Scanner() {
           <div className="panel p-6">
             <p className="label">Collector availability</p>
             <div className="mt-4 space-y-3">
-              {agents.length === 0 ? (
+              {agentsLoading ? (
+                <p className="text-sm text-slate-500">Loading collector fleet…</p>
+              ) : agents.length === 0 ? (
                 <p className="text-sm text-slate-500">No collectors have been registered yet.</p>
               ) : (
                 agents.map((agent) => (
@@ -255,7 +272,9 @@ export function Scanner() {
               <h3 className="mt-1 text-lg font-semibold text-white">Recent runs and execution status</h3>
             </div>
             <div className="divide-y divide-white/6">
-              {scans.length === 0 ? (
+              {scansLoading ? (
+                <div className="px-6 py-12 text-sm text-slate-500">Loading assessment ledger…</div>
+              ) : scans.length === 0 ? (
                 <div className="px-6 py-12 text-sm text-slate-500">No assessments have been executed yet.</div>
               ) : (
                 scans.slice(0, 8).map((scan) => (
