@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package defense.v1;
+
+option go_package = "ad-assessment/defense-shared/proto/defense/v1;defensev1";
+
+import "defense/v1/common.proto";
+
+service SignalCollectorService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc PublishSignals(stream EventEnvelope) returns (HealthResponse);
+}
+
+service SignalNormalizerService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+service DetectorEngineService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+service CorrelationEngineService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+service ResponseOrchestratorService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+service EvidenceLedgerService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+service DefenseAPIService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+}

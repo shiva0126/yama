@@ -2,7 +2,7 @@ import axios from 'axios'
 import type {
   ScanJob, ScanRequest, CollectorAgent, Finding, ScoreCard,
   ADUser, ADGroup, ADComputer, ADGPO, ADDomainController, SecurityIndicator,
-  InstallRequest, InstallJob,
+  InstallRequest, InstallJob, OverviewSummary,
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
@@ -99,6 +99,13 @@ export const findingsApi = {
     api.get<{ findings: Finding[]; total: number }>(`/findings/scan/${scanId}`),
   listIndicators: () =>
     api.get<{ indicators: SecurityIndicator[]; total: number }>('/findings/indicators'),
+}
+
+// ============================================================
+// Overview
+// ============================================================
+export const overviewApi = {
+  summary: () => api.get<OverviewSummary>('/overview/summary'),
 }
 
 // ============================================================

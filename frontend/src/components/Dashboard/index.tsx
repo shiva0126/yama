@@ -1,528 +1,350 @@
-import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { format } from 'date-fns'
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
-import { ArrowRight, BadgeAlert, Blocks, Bot, ShieldAlert, ShieldEllipsis, Target } from 'lucide-react'
-import { findingsApi, scansApi } from '../../api'
-import { ScoreGauge } from './ScoreGauge'
-import type { Finding, SecurityIndicator } from '../../types'
+import { format, formatDistanceToNow } from 'date-fns'
+import { ArrowRight, BrainCircuit, ShieldAlert, ShieldCheck, Workflow } from 'lucide-react'
+import clsx from 'clsx'
+import { overviewApi } from '../../api'
+import type { ComponentType } from 'react'
+import type { ScanJob } from '../../types'
 
-const severityPalette: Record<string, string> = {
-  critical: '#ff6b6b',
-  high: '#ff9c54',
-  medium: '#f4c96b',
-  low: '#5ea9ff',
-  info: '#6b7b90',
-}
-
-const categoryTone: Record<string, string> = {
-  Kerberos: '#8bbdff',
-  'Privileged Access': '#ff8a7a',
-  'PKI / Certificate Services': '#73e0c0',
-  Delegation: '#76c0ff',
-  Trusts: '#f4c96b',
-  'NTLM & Authentication': '#ff9c54',
-  'Persistence Mechanisms': '#d38bff',
-  'Group Policy': '#91a7ff',
-  'Domain Controllers': '#6fd0e4',
-  'AD Structure': '#8ca8c7',
-  'Account Security': '#ffb36d',
+const severityTone: Record<string, string> = {
+  critical: 'border-red-500/20 bg-red-500/10 text-red-200',
+  high: 'border-orange-500/20 bg-orange-500/10 text-orange-200',
+  medium: 'border-amber-500/20 bg-amber-500/10 text-amber-200',
+  low: 'border-sky-500/20 bg-sky-500/10 text-sky-200',
+  info: 'border-slate-500/20 bg-slate-500/10 text-slate-300',
 }
 
 export function Dashboard() {
   const navigate = useNavigate()
 
-  const { data: scansData } = useQuery({
-    queryKey: ['scans'],
-    queryFn: () => scansApi.list().then((r) => r.data),
-    refetchInterval: 10000,
+  const { data, isLoading } = useQuery({
+    queryKey: ['overview-summary'],
+    queryFn: () => overviewApi.summary().then((r) => r.data),
+    refetchInterval: 15_000,
   })
 
-  const scans = scansData?.scans ?? []
-  const completedScans = scans.filter((scan) => scan.status === 'completed')
-  const latestScan = completedScans[0]
-  const previousScan = completedScans[1]
-  const runningScan = scans.find((scan) => scan.status === 'running')
-
-  const { data: findingsData } = useQuery({
-    queryKey: ['findings', latestScan?.id],
-    queryFn: () => (latestScan ? findingsApi.getByScan(latestScan.id).then((r) => r.data) : null),
-    enabled: !!latestScan,
-  })
-
-  const { data: indicatorsData } = useQuery({
-    queryKey: ['indicator-catalog'],
-    queryFn: () => findingsApi.listIndicators().then((r) => r.data),
-  })
-
-  const findings = findingsData?.findings ?? []
-  const indicators = indicatorsData?.indicators ?? []
-
-  const postureDelta =
-    latestScan?.overall_score != null && previousScan?.overall_score != null
-      ? latestScan.overall_score - previousScan.overall_score
-      : null
-
-  const {
-    priorityFindings,
-    severityData,
-    categoryData,
-    trendData,
-    attackCoverage,
-    topAffectedObjects,
-  } = useMemo(() => {
-    const priority = [...findings]
-      .sort((a, b) => {
-        if (a.severity === b.severity) return b.risk_score - a.risk_score
-        return severityRank(b.severity) - severityRank(a.severity)
-      })
-      .slice(0, 6)
-
-    const severityCounts = ['critical', 'high', 'medium', 'low', 'info'].map((severity) => ({
-      name: severityLabel(severity),
-      key: severity,
-      value: findings.filter((finding) => finding.severity === severity).length,
-      color: severityPalette[severity],
-    }))
-
-    const categoryMap = new Map<string, { total: number; weighted: number }>()
-    findings.forEach((finding) => {
-      const existing = categoryMap.get(finding.category) ?? { total: 0, weighted: 0 }
-      existing.total += 1
-      existing.weighted += severityRank(finding.severity) * 10 + finding.risk_score
-      categoryMap.set(finding.category, existing)
-    })
-
-    const categoryEntries = [...categoryMap.entries()]
-      .map(([name, value]) => ({
-        name,
-        total: value.total,
-        weighted: value.weighted,
-        color: categoryTone[name] ?? '#7c9ec6',
-      }))
-      .sort((a, b) => b.weighted - a.weighted)
-      .slice(0, 7)
-
-    const trend = [...completedScans]
-      .reverse()
-      .slice(-8)
-      .map((scan) => ({
-        date: scan.completed_at ? format(new Date(scan.completed_at), 'MMM d') : 'Pending',
-        score: scan.overall_score ?? 0,
-        critical: scan.critical_count ?? 0,
-        high: scan.high_count ?? 0,
-      }))
-
-    const covered = new Set(findings.map((finding) => finding.indicator_id)).size
-    const coverage = indicators.length > 0 ? Math.round((covered / indicators.length) * 100) : 0
-
-    const objectMap = new Map<string, { label: string; count: number }>()
-    findings.forEach((finding) => {
-      finding.affected_objects?.slice(0, 5).forEach((object) => {
-        const key = `${object.type}:${object.name}`
-        const current = objectMap.get(key) ?? { label: `${object.type} · ${object.name}`, count: 0 }
-        current.count += 1
-        objectMap.set(key, current)
-      })
-    })
-
-    const objects = [...objectMap.values()].sort((a, b) => b.count - a.count).slice(0, 5)
-
-    return {
-      priorityFindings: priority,
-      severityData: severityCounts,
-      categoryData: categoryEntries,
-      trendData: trend,
-      attackCoverage: { covered, total: indicators.length, percentage: coverage },
-      topAffectedObjects: objects,
-    }
-  }, [completedScans, findings, indicators])
+  const latestScan = data?.scans.latest_completed ?? null
+  const recentScans = data?.scans.recent ?? []
+  const recentReports = data?.reports.recent ?? []
+  const topFindings = data?.findings.top ?? []
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="panel-strong overflow-hidden">
-          <div className="border-b border-white/8 px-6 py-5">
-            <p className="label">Overview</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-tight text-white">Security posture</h2>
+          <div className="border-b border-slate-200/80 px-6 py-5">
+            <p className="label">Executive posture</p>
+            <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Active Directory risk command center</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
+              A high-density operational view for analysts and CISOs. The focus is current exposure, deltas, collector health, and
+              unresolved attack paths.
+            </p>
           </div>
 
-          <div className="grid gap-4 px-6 py-6 md:grid-cols-2 2xl:grid-cols-4">
+          <div className="grid gap-4 px-6 py-6 md:grid-cols-2 xl:grid-cols-4">
             <MetricCard
-              icon={ShieldEllipsis}
+              icon={ShieldCheck}
               title="Protection index"
               value={latestScan?.overall_score ?? '—'}
-              suffix="/100"
-              detail={postureDelta == null ? 'Awaiting historical baseline' : `${postureDelta >= 0 ? '+' : ''}${postureDelta} vs prior run`}
+              detail={latestScan?.completed_at ? `Last completed ${formatDistanceToNow(new Date(latestScan.completed_at), { addSuffix: true })}` : 'No completed assessment yet'}
             />
             <MetricCard
-              icon={BadgeAlert}
+              icon={ShieldAlert}
               title="Critical exposures"
-              value={latestScan?.critical_count ?? 0}
-              detail="Immediate attack enablers"
+              value={data?.findings.critical ?? 0}
+              detail={`${data?.findings.new ?? 0} new since the latest scan`}
               tone="danger"
             />
             <MetricCard
-              icon={Target}
-              title="Attack classes covered"
-              value={attackCoverage.covered}
-              suffix={attackCoverage.total ? `/${attackCoverage.total}` : ''}
-              detail={`${attackCoverage.percentage}% of current indicator catalog hit in latest dataset`}
+              icon={BrainCircuit}
+              title="Coverage"
+              value={data?.findings.coverage.percentage ?? 0}
+              suffix="%"
+              detail={`${data?.findings.coverage.covered ?? 0}/${data?.findings.coverage.total ?? 0} indicators hit`}
               tone="info"
             />
             <MetricCard
-              icon={Bot}
-              title="Collector state"
-              value={runningScan ? 'Live' : 'Idle'}
-              detail={runningScan ? `${runningScan.domain} at ${runningScan.progress}%` : 'No active assessment execution'}
-              tone={runningScan ? 'success' : 'default'}
+              icon={Workflow}
+              title="Collectors online"
+              value={data?.collectors.online ?? 0}
+              detail={`${data?.collectors.stale ?? 0} stale / ${data?.collectors.offline ?? 0} offline`}
+              tone="success"
             />
           </div>
         </div>
 
         <div className="panel p-6">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="label">Latest operation</p>
-              <h3 className="mt-2 text-xl font-semibold text-white">{latestScan?.domain ?? 'No completed assessment'}</h3>
-              <p className="mt-1 text-sm text-slate-400">
-                {latestScan?.completed_at
-                  ? `Completed ${format(new Date(latestScan.completed_at), 'MMM d, yyyy • HH:mm')}`
-                  : 'No completed assessment available.'}
+              <p className="label">Operational state</p>
+              <h3 className="mt-2 text-xl font-semibold text-slate-950">Current assessment posture</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                {latestScan?.domain ?? 'No active domain'} {latestScan?.completed_at ? `• ${format(new Date(latestScan.completed_at), 'MMM d, yyyy HH:mm')}` : ''}
               </p>
             </div>
             <button onClick={() => navigate('/scanner')} className="btn-secondary">
-              Open Assessment
-            </button>
-          </div>
-
-          <div className="mt-6 flex items-center justify-center">
-            <ScoreGauge score={latestScan?.overall_score ?? 0} />
-          </div>
-
-          <div className="mt-6 grid gap-3 md:grid-cols-2">
-            <CompactStat label="Critical" value={latestScan?.critical_count ?? 0} tone="critical" />
-            <CompactStat label="High" value={latestScan?.high_count ?? 0} tone="high" />
-            <CompactStat label="Medium" value={latestScan?.medium_count ?? 0} tone="medium" />
-            <CompactStat label="Total findings" value={latestScan?.total_findings ?? 0} tone="neutral" />
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-6 2xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="panel p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="label">Posture trend</p>
-              <h3 className="mt-2 text-lg font-semibold text-white">Security score versus severe exposure load</h3>
-            </div>
-            <button onClick={() => navigate('/reports')} className="btn-ghost text-sky-300">
-              Review reports
+              Start assessment
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-5 h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trendData}>
-                <defs>
-                  <linearGradient id="scoreFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#4ea1ff" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#4ea1ff" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="criticalFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#ff6b6b" stopOpacity={0.28} />
-                    <stop offset="100%" stopColor="#ff6b6b" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="date" stroke="#73839a" tickLine={false} axisLine={false} />
-                <YAxis stroke="#73839a" tickLine={false} axisLine={false} width={36} />
-                <Tooltip
-                  contentStyle={{
-                    background: 'rgba(7, 17, 31, 0.96)',
-                    border: '1px solid rgba(124, 154, 190, 0.16)',
-                    borderRadius: 16,
-                    color: '#e8eef8',
-                  }}
-                />
-                <Area type="monotone" dataKey="score" stroke="#4ea1ff" fill="url(#scoreFill)" strokeWidth={2.5} />
-                <Area type="monotone" dataKey="critical" stroke="#ff6b6b" fill="url(#criticalFill)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
 
-        <div className="grid gap-6">
-          <div className="panel p-6">
-            <p className="label">Severity profile</p>
-            <h3 className="mt-2 text-lg font-semibold text-white">Latest exposure mix</h3>
-            <div className="mt-4 grid items-center gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-              <div className="h-[220px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={severityData}
-                      dataKey="value"
-                      innerRadius={58}
-                      outerRadius={84}
-                      paddingAngle={3}
-                      stroke="rgba(7, 17, 31, 0.8)"
-                    >
-                      {severityData.map((entry) => (
-                        <Cell key={entry.key} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={{
-                        background: 'rgba(7, 17, 31, 0.96)',
-                        border: '1px solid rgba(124, 154, 190, 0.16)',
-                        borderRadius: 16,
-                        color: '#e8eef8',
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-3">
-                {severityData.map((entry) => (
-                  <div key={entry.key} className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
-                      <span className="text-sm text-slate-300">{entry.name}</span>
-                    </div>
-                    <span className="text-sm font-semibold text-white">{entry.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <CompactStat label="Running scans" value={data?.scans.running ?? 0} />
+            <CompactStat label="Completed scans" value={data?.scans.completed ?? 0} />
+            <CompactStat label="High findings" value={data?.findings.high ?? 0} />
+            <CompactStat label="Reports generated" value={data?.reports.total ?? 0} />
           </div>
 
-          <div className="panel p-6">
-            <p className="label">Attack pressure</p>
-            <h3 className="mt-2 text-lg font-semibold text-white">Most exposed control domains</h3>
-            <div className="mt-4 h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={categoryData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 24 }}>
-                  <CartesianGrid stroke="rgba(255,255,255,0.05)" horizontal={false} />
-                  <XAxis type="number" stroke="#73839a" axisLine={false} tickLine={false} />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    stroke="#73839a"
-                    axisLine={false}
-                    tickLine={false}
-                    width={120}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: 'rgba(7, 17, 31, 0.96)',
-                      border: '1px solid rgba(124, 154, 190, 0.16)',
-                      borderRadius: 16,
-                      color: '#e8eef8',
-                    }}
-                  />
-                  <Bar dataKey="weighted" radius={[0, 8, 8, 0]}>
-                    {categoryData.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <p className="label">Leadership view</p>
+            <div className="mt-3 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-5xl font-semibold tracking-tight text-slate-950">{latestScan?.overall_score ?? '—'}</p>
+                <p className="mt-2 text-sm text-slate-600">Protection index for the most recent completed assessment</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Latest report</p>
+                <p className="mt-1 text-sm font-medium text-slate-900">{recentReports[0]?.domain ?? '—'}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {recentReports[0]?.generated_at ? formatDistanceToNow(new Date(recentReports[0].generated_at), { addSuffix: true }) : 'No report generated yet'}
+                </p>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+      <section className="grid gap-6 2xl:grid-cols-[1.15fr_0.85fr]">
         <div className="panel overflow-hidden">
-          <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+          <div className="flex items-center justify-between border-b border-slate-200/80 px-6 py-4">
             <div>
-              <p className="label">Priority queue</p>
-              <h3 className="mt-1 text-lg font-semibold text-white">Highest-priority exposures from the latest assessment</h3>
+              <p className="label">Analyst queue</p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-950">Top exposures requiring review</h3>
             </div>
-            <button onClick={() => navigate('/findings')} className="btn-secondary">
-              Open Exposure
-            </button>
+            <Link to="/findings" className="btn-ghost">
+              Open exposure queue
+              <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
-
-          <div className="divide-y divide-white/6">
-            {priorityFindings.length === 0 ? (
-              <div className="px-6 py-14 text-center text-sm text-slate-500">No findings available yet.</div>
-            ) : (
-              priorityFindings.map((finding) => (
-                <button
-                  key={finding.id}
-                  onClick={() => navigate('/findings')}
-                  className="flex w-full items-start gap-4 px-6 py-4 text-left transition hover:bg-white/[0.03]"
-                >
-                  <div
-                    className="mt-1 h-2.5 w-2.5 rounded-full"
-                    style={{ backgroundColor: severityPalette[finding.severity] }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-white">{finding.name}</span>
-                      <span className="chip px-2.5 py-0.5" style={{ color: severityPalette[finding.severity] }}>
-                        {severityLabel(finding.severity)}
-                      </span>
-                      <span className="text-xs uppercase tracking-[0.16em] text-slate-500">{finding.indicator_id}</span>
-                    </div>
-                    <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-400">{finding.description}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Risk</p>
-                    <p className="mt-1 text-lg font-semibold text-white">{finding.risk_score}</p>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
+          {isLoading ? (
+            <div className="px-6 py-12 text-sm text-slate-500">Loading overview…</div>
+          ) : topFindings.length === 0 ? (
+            <div className="px-6 py-12 text-sm text-slate-500">No findings available for the latest assessment.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-slate-200 text-left text-xs uppercase tracking-[0.16em] text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3 font-medium">Finding</th>
+                    <th className="px-6 py-3 font-medium">Severity</th>
+                    <th className="px-6 py-3 font-medium">Risk</th>
+                    <th className="px-6 py-3 font-medium">Objects</th>
+                    <th className="px-6 py-3 font-medium">Detected</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200/80">
+                  {topFindings.map((finding) => (
+                    <tr key={finding.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-4">
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-950">{finding.name}</p>
+                          <p className="mt-1 line-clamp-2 text-xs leading-6 text-slate-600">{finding.description}</p>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={clsx('rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]', severityTone[finding.severity])}>
+                          {finding.severity}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 font-semibold text-slate-950">{finding.risk_score}</td>
+                      <td className="px-6 py-4 text-slate-600">{finding.affected_objects.length}</td>
+                      <td className="px-6 py-4 text-slate-600">
+                        {formatDistanceToNow(new Date(finding.detected_at), { addSuffix: true })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="grid gap-6">
           <div className="panel p-6">
-            <p className="label">Affected surface</p>
-            <h3 className="mt-2 text-lg font-semibold text-white">Objects appearing most often across findings</h3>
-            <div className="mt-4 space-y-3">
-              {topAffectedObjects.length === 0 ? (
-                <p className="text-sm text-slate-500">No affected-object telemetry available yet.</p>
-              ) : (
-                topAffectedObjects.map((object) => (
-                  <div key={object.label} className="flex items-center justify-between rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Blocks className="h-4 w-4 text-slate-500" />
-                      <span className="text-sm text-slate-300">{object.label}</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="label">Collector health</p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-950">Fleet readiness</h3>
+              </div>
+              <span className="chip">
+                {data?.collectors.total ?? 0} total
+              </span>
+            </div>
+            <div className="mt-5 space-y-3">
+              {(data?.collectors.recent ?? []).map((agent) => (
+                <div key={agent.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{agent.name}</p>
+                      <p className="mt-1 text-xs text-slate-600">{agent.hostname} · {agent.domain}</p>
                     </div>
-                    <span className="text-sm font-semibold text-white">{object.count}</span>
+                    <span className="chip capitalize">{agent.status}</span>
                   </div>
-                ))
-              )}
+                  <p className="mt-2 text-xs text-slate-500">
+                    Last seen {agent.last_seen ? formatDistanceToNow(new Date(agent.last_seen), { addSuffix: true }) : 'unknown'}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
 
           <div className="panel p-6">
-            <p className="label">Run ledger</p>
-            <h3 className="mt-2 text-lg font-semibold text-white">Recent assessments</h3>
-            <div className="mt-4 space-y-3">
-              {completedScans.slice(0, 5).map((scan) => (
-                <div key={scan.id} className="rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-semibold text-white">{scan.domain}</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {scan.completed_at ? format(new Date(scan.completed_at), 'MMM d, yyyy • HH:mm') : 'Pending'}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Score</p>
-                      <p className="text-sm font-semibold text-white">{scan.overall_score ?? '—'}</p>
-                    </div>
-                  </div>
-                </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="label">Recent scans</p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-950">Assessment timeline</h3>
+              </div>
+              <Link to="/scanner" className="btn-ghost">
+                New run
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {recentScans.slice(0, 4).map((scan) => (
+                <ScanItem key={scan.id} scan={scan} />
               ))}
             </div>
           </div>
         </div>
       </section>
+
+      <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="panel p-6">
+          <p className="label">Coverage</p>
+          <h3 className="mt-2 text-lg font-semibold text-slate-950">Indicator coverage and new exposure load</h3>
+          <div className="mt-5 space-y-4">
+            <MiniProgress label="Coverage" value={data?.findings.coverage.percentage ?? 0} tone="blue" />
+            <MiniProgress label="Critical" value={Math.min(100, (data?.findings.critical ?? 0) * 8)} tone="red" />
+            <MiniProgress label="High" value={Math.min(100, (data?.findings.high ?? 0) * 5)} tone="amber" />
+          </div>
+        </div>
+
+        <div className="panel p-6">
+          <p className="label">Reports</p>
+          <h3 className="mt-2 text-lg font-semibold text-slate-950">Latest evidence packages</h3>
+          <div className="mt-5 space-y-3">
+            {recentReports.length === 0 ? (
+              <p className="text-sm text-slate-500">No reports generated yet.</p>
+            ) : (
+              recentReports.slice(0, 4).map((report) => (
+                <div key={report.id} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">{report.domain}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {report.format.toUpperCase()} · score {report.score}
+                    </p>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    {formatDistanceToNow(new Date(report.generated_at), { addSuffix: true })}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   )
-}
-
-function severityRank(severity: string) {
-  switch (severity) {
-    case 'critical':
-      return 5
-    case 'high':
-      return 4
-    case 'medium':
-      return 3
-    case 'low':
-      return 2
-    default:
-      return 1
-  }
-}
-
-function severityLabel(severity: string) {
-  return severity.charAt(0).toUpperCase() + severity.slice(1)
 }
 
 function MetricCard({
   icon: Icon,
   title,
   value,
-  suffix,
   detail,
+  suffix = '',
   tone = 'default',
 }: {
-  icon: typeof ShieldAlert
+  icon: ComponentType<{ className?: string }>
   title: string
-  value: string | number
-  suffix?: string
+  value: number | string
   detail: string
+  suffix?: string
   tone?: 'default' | 'danger' | 'info' | 'success'
 }) {
-  const toneStyles: Record<string, string> = {
-    default: 'border-white/8 bg-white/[0.02] text-slate-300',
-    danger: 'border-red-400/18 bg-red-400/8 text-red-200',
-    info: 'border-sky-400/18 bg-sky-400/8 text-sky-200',
-    success: 'border-emerald-400/18 bg-emerald-400/8 text-emerald-200',
-  }
+  const toneClass =
+    tone === 'danger'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : tone === 'info'
+        ? 'border-sky-200 bg-sky-50 text-sky-700'
+        : tone === 'success'
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          : 'border-slate-200 bg-white text-slate-700'
 
   return (
-    <div className={`rounded-2xl border p-4 ${toneStyles[tone]}`}>
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/8 bg-black/10">
-          <Icon className="h-4 w-4" />
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{title}</p>
-          <p className="mt-1 text-2xl font-semibold text-white">
-            {value}
-            {suffix ? <span className="ml-1 text-base text-slate-500">{suffix}</span> : null}
-          </p>
-        </div>
+    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+      <div className={clsx('flex h-11 w-11 items-center justify-center rounded-2xl border', toneClass)}>
+        <Icon className="h-5 w-5" />
       </div>
-      <p className="mt-3 text-sm text-slate-400">{detail}</p>
+      <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{title}</p>
+      <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
+        {value}
+        {suffix}
+      </p>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
     </div>
   )
 }
 
-function CompactStat({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: string | number
-  tone: 'critical' | 'high' | 'medium' | 'neutral'
-}) {
-  const styles: Record<string, string> = {
-    critical: 'border-red-400/16 bg-red-400/8 text-red-200',
-    high: 'border-orange-400/16 bg-orange-400/8 text-orange-200',
-    medium: 'border-amber-400/16 bg-amber-400/8 text-amber-200',
-    neutral: 'border-white/8 bg-white/[0.02] text-slate-200',
-  }
+function CompactStat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
+    </div>
+  )
+}
+
+function MiniProgress({ label, value, tone }: { label: string; value: number; tone: 'blue' | 'red' | 'amber' }) {
+  const color =
+    tone === 'red'
+      ? 'from-red-500 to-red-400'
+      : tone === 'amber'
+        ? 'from-amber-500 to-orange-400'
+        : 'from-sky-600 to-cyan-500'
 
   return (
-    <div className={`rounded-2xl border px-4 py-3 ${styles[tone]}`}>
-      <p className="text-xs uppercase tracking-[0.16em] text-slate-500">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-white">{value}</p>
+    <div>
+      <div className="flex items-center justify-between text-xs uppercase tracking-[0.16em] text-slate-500">
+        <span>{label}</span>
+        <span>{value}%</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+        <div className={clsx('h-full rounded-full bg-gradient-to-r', color)} style={{ width: `${value}%` }} />
+      </div>
     </div>
+  )
+}
+
+function ScanItem({ scan }: { scan: ScanJob }) {
+  return (
+    <Link to={`/findings?scan_id=${scan.id}`} className="block rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-slate-300 hover:bg-white">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-950">{scan.domain}</p>
+          <p className="mt-1 text-xs text-slate-600">
+            {scan.status} · {scan.total_findings} findings
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-sm font-semibold text-slate-950">{scan.overall_score ?? '—'}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {scan.completed_at ? formatDistanceToNow(new Date(scan.completed_at), { addSuffix: true }) : 'Pending'}
+          </p>
+        </div>
+      </div>
+    </Link>
   )
 }

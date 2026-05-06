@@ -3,11 +3,11 @@ import { Activity, Boxes, ChevronsLeft, ChevronsRight, FileSpreadsheet, LogOut, 
 import clsx from 'clsx'
 
 const nav = [
-  { to: '/dashboard', label: 'Dashboard', icon: Shield },
-  { to: '/scanner', label: 'Assessment', icon: Radar },
-  { to: '/findings', label: 'Exposure', icon: Activity },
+  { to: '/overview', label: 'Overview', icon: Shield },
+  { to: '/scanner', label: 'Assessments', icon: Radar },
+  { to: '/findings', label: 'Exposure Queue', icon: Activity },
   { to: '/inventory', label: 'Directory', icon: Boxes },
-  { to: '/topology', label: 'Topology', icon: Waypoints },
+  { to: '/topology', label: 'Attack Surface', icon: Waypoints },
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
   { to: '/agents', label: 'Agents', icon: Network },
 ]
@@ -36,12 +36,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             <img src="/yama.svg" className="h-7 w-7" alt="Yama" />
           </div>
           {!collapsed && (
-            <div className="min-w-0">
-              <p className="text-base font-semibold tracking-[0.04em] text-slate-50">Yama</p>
-              <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400/75">Security Console</p>
-            </div>
-          )}
-        </div>
+              <div className="min-w-0">
+                <p className="text-base font-semibold tracking-[0.04em] text-slate-50">Yama</p>
+                <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400/75">AD Security Console</p>
+              </div>
+            )}
+          </div>
 
         {!collapsed && (
           <button

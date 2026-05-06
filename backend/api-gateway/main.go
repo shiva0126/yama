@@ -143,6 +143,15 @@ func main() {
 				reports.GET("/:id", reportHandler.GetReport)
 				reports.GET("/:id/download", reportHandler.Download)
 			}
+
+			overviewHandler := handlers.NewOverviewHandler(
+				cfg.ScanOrchestratorURL,
+				cfg.ScanOrchestratorURL,
+				cfg.AnalysisEngineURL,
+				cfg.ReportServiceURL,
+				logger,
+			)
+			protected.GET("/overview/summary", overviewHandler.Summary)
 		}
 	}
 

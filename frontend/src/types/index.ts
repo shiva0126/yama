@@ -201,6 +201,54 @@ export interface SecurityIndicator {
   remediation: string
 }
 
+export interface ReportSummary {
+  id: string
+  scan_id: string
+  format: 'html' | 'pdf' | 'json'
+  domain: string
+  score: number
+  generated_at: string
+}
+
+export interface OverviewSummary {
+  generated_at: string
+  collectors: {
+    total: number
+    online: number
+    busy: number
+    offline: number
+    stale: number
+    recent: CollectorAgent[]
+  }
+  scans: {
+    total: number
+    running: number
+    completed: number
+    failed: number
+    latest_completed: ScanJob | null
+    recent: ScanJob[]
+  }
+  findings: {
+    total: number
+    critical: number
+    high: number
+    medium: number
+    low: number
+    info: number
+    new: number
+    coverage: {
+      covered: number
+      total: number
+      percentage: number
+    }
+    top: Finding[]
+  }
+  reports: {
+    total: number
+    recent: ReportSummary[]
+  }
+}
+
 // ============================================================
 // Agent Installation
 // ============================================================

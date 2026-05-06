@@ -1,0 +1,467 @@
+version: v1alpha1
+
+families:
+  - id: credential-extraction
+    name: Credential Extraction
+    description: Hash theft, secret dumping, and AD replication-based credential extraction.
+    priority: 1
+  - id: kerberos
+    name: Kerberos Abuse
+    description: Ticket forgery, roasting, delegation abuse, and certificate-backed Kerberos takeover.
+    priority: 1
+  - id: ntlm-auth
+    name: NTLM and Authentication Abuse
+    description: Relay, coercion-fed relay, downgrade, and credential guessing paths.
+    priority: 1
+  - id: dc-replication
+    name: Domain Controller and Replication Abuse
+    description: Replication misuse, rogue DC patterns, and DC takeover paths.
+    priority: 1
+  - id: adcs
+    name: AD CS Abuse
+    description: Certificate Services privilege escalation and authentication takeover paths.
+    priority: 1
+  - id: acl-delegation
+    name: ACL and Delegation Abuse
+    description: Object control, shadow credentials, group injection, and delegation writes.
+    priority: 1
+  - id: persistence
+    name: Persistence
+    description: Durable footholds in AD or Windows control planes.
+    priority: 2
+  - id: lateral-movement
+    name: Lateral Movement
+    description: Remote execution and movement using stolen or forged credentials.
+    priority: 2
+  - id: trust-forest
+    name: Trust and Forest Abuse
+    description: Cross-domain and cross-forest escalation paths.
+    priority: 2
+  - id: gpo-policy
+    name: GPO and Policy Abuse
+    description: Group Policy and domain policy manipulation.
+    priority: 2
+
+detectors:
+  - id: CRED-001
+    name: DCSync
+    family_id: credential-extraction
+    type: technique
+    mitre_ids: ["T1003.006"]
+    aliases: ["Directory Replication Service abuse", "NetSync"]
+    description: Detects unauthorized AD replication requests used to replicate password data.
+    core_preconditions:
+      - Replication rights granted directly or indirectly
+    required_signals:
+      - dc.replication_request
+      - dir.rights_replication
+      - auth.privileged
+    optional_signals:
+      - rpc.drsuapi_usage
+      - auth.source_mismatch
+    response_candidates:
+      - approve-disable-account
+      - approve-revert-acl
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+    signal_specs:
+      - kind: dc.replication_request
+        event_ids: ["4662"]
+        protocols: ["DRSUAPI", "MS-DRSR"]
+        required: true
+        notes: Replication-style access by a non-DC actor is the core signal.
+      - kind: dir.rights_replication
+        attributes: ["DS-Replication-Get-Changes", "DS-Replication-Get-Changes-All"]
+        required: true
+      - kind: auth.source_mismatch
+        required: false
+    correlation:
+      window: 15m
+      anchor_fields: ["actor", "source_host", "domain"]
+      secondary_signals: ["rpc.drsuapi_usage", "target.krbtgt"]
+      escalation: Emit a critical incident when replication activity comes from a non-DC or an unexpected service account.
+    evidence:
+      required_artifacts: ["security-event-4662", "directory-acl-state", "source-host-context"]
+      storage_class: hot
+    response_policy:
+      mode: approval-required
+      minimum_confidence: high
+      protected_scopes: ["KRBTGT", "Domain Controllers", "Backup service accounts"]
+      rollback_artifacts: ["pre-change-domain-acl"]
+    source_refs:
+      - title: Microsoft Learn - MS-DRSR drsuapi interface
+        url: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/58f33216-d9f1-43bf-a183-87e3c899c410
+        type: protocol
+      - title: Microsoft Learn - Audit Directory Service Changes
+        url: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/audit-directory-service-changes
+        type: auditing
+
+  - id: CRED-005
+    name: LSASS Memory Dump
+    family_id: credential-extraction
+    type: technique
+    mitre_ids: ["T1003.001"]
+    aliases: ["Mimikatz sekurlsa", "MiniDump", "ProcDump LSASS"]
+    description: Detects LSASS memory access and dump patterns on privileged systems.
+    core_preconditions:
+      - Local administrative or SYSTEM execution on a host
+    required_signals:
+      - proc.lsass_access
+      - proc.dump_write
+    optional_signals:
+      - proc.sedebug
+      - host.sensitive_process_access
+    response_candidates:
+      - contain-host
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: KRB-001
+    name: Kerberoasting
+    family_id: kerberos
+    type: technique
+    mitre_ids: ["T1558.003"]
+    aliases: ["TGS roasting"]
+    description: Detects suspicious ticket-granting service requests against SPN-bearing accounts.
+    core_preconditions:
+      - Target account has an SPN
+    required_signals:
+      - auth.kerberos.tgs
+      - ldap.spn_query_burst
+    optional_signals:
+      - auth.request_burst
+      - auth.source_mismatch
+    response_candidates:
+      - alert
+    detector_priority: high
+    response_priority: medium
+    demo_ready: true
+    signal_specs:
+      - kind: auth.kerberos.tgs
+        event_ids: ["4769"]
+        protocols: ["Kerberos"]
+        required: true
+      - kind: ldap.spn_query_burst
+        required: false
+      - kind: auth.request_burst
+        required: false
+    correlation:
+      window: 10m
+      anchor_fields: ["actor", "source_host"]
+      secondary_signals: ["dir.attr_write:servicePrincipalName"]
+      escalation: Escalate to critical if preceded by SPN-jacking or if targets are Tier 0 service accounts.
+    source_refs:
+      - title: Microsoft Learn - Event 4769
+        url: https://learn.microsoft.com/en-us/windows/security/threat-protection/auditing/event-4769
+        type: auditing
+
+  - id: KRB-004
+    name: AS-REP Inducement by Attribute Write
+    family_id: kerberos
+    type: chain
+    mitre_ids: ["T1558.004"]
+    aliases: ["Preauth disable then roast"]
+    description: Detects an account being made AS-REP roastable and then immediately abused.
+    core_preconditions:
+      - Write path to target user attributes
+    required_signals:
+      - dir.attr_write:userAccountControl
+      - auth.asreq_no_preauth
+    optional_signals:
+      - auth.source_mismatch
+    response_candidates:
+      - approve-revert-acl
+      - approve-disable-account
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: KRB-014
+    name: Resource-Based Constrained Delegation
+    family_id: kerberos
+    type: technique
+    mitre_ids: ["T1558"]
+    aliases: ["RBCD", "msDS-AllowedToActOnBehalfOfOtherIdentity abuse"]
+    description: Detects unauthorized writes enabling a machine or service to impersonate users to a target service.
+    core_preconditions:
+      - Write path to target computer object
+    required_signals:
+      - dir.attr_write:msDS-AllowedToActOnBehalfOfOtherIdentity
+      - auth.s4u2proxy
+    optional_signals:
+      - dir.machine_create
+      - auth.source_mismatch
+    response_candidates:
+      - approve-revert-delegation
+      - approve-remove-machine
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+    signal_specs:
+      - kind: dir.attr_write:msDS-AllowedToActOnBehalfOfOtherIdentity
+        attributes: ["msDS-AllowedToActOnBehalfOfOtherIdentity"]
+        required: true
+      - kind: auth.s4u2proxy
+        protocols: ["Kerberos S4U"]
+        required: true
+    source_refs:
+      - title: Microsoft Learn - msDS-AllowedToDelegateTo attribute
+        url: https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-allowedtodelegateto
+        type: schema
+
+  - id: NTLM-001
+    name: NTLM Relay
+    family_id: ntlm-auth
+    type: technique
+    mitre_ids: ["T1557.001"]
+    aliases: ["SMB relay", "LDAP relay", "HTTP relay"]
+    description: Detects relayed NTLM authentication to downstream services.
+    core_preconditions:
+      - NTLM accepted by target service
+      - Missing signing, binding, or relay protections
+    required_signals:
+      - auth.ntlm
+      - relay.target_service
+      - auth.source_mismatch
+    optional_signals:
+      - dir.object_change_after_auth
+      - cert.enroll_http
+    response_candidates:
+      - contain-host
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: DC-001
+    name: DCShadow
+    family_id: dc-replication
+    type: technique
+    mitre_ids: ["T1207"]
+    aliases: ["Rogue Domain Controller"]
+    description: Detects rogue DC registration and replication-based object injection.
+    core_preconditions:
+      - Domain-level privileges or equivalent material
+    required_signals:
+      - dir.dc_object_add
+      - dc.replication_stage
+    optional_signals:
+      - auth.kerberos.drs_spn_use
+      - rpc.drsuapi_usage
+    response_candidates:
+      - approve-disable-account
+      - approve-remove-machine
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: ADCS-001
+    name: ESC1
+    family_id: adcs
+    type: technique
+    mitre_ids: ["T1649"]
+    aliases: ["Template SAN supply abuse"]
+    description: Detects certificate requests and template settings allowing SAN impersonation for low-privileged users.
+    core_preconditions:
+      - Vulnerable certificate template
+    required_signals:
+      - cert.template_flags
+      - cert.enroll
+      - cert.san_unusual
+    optional_signals:
+      - auth.pkinit
+    response_candidates:
+      - approve-disable-template
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+    signal_specs:
+      - kind: cert.template_flags
+        attributes: ["msPKI-Certificate-Name-Flag"]
+        required: true
+        notes: Track enrollee-supplied subject behavior and weak issuance settings.
+      - kind: cert.enroll
+        required: true
+      - kind: cert.san_unusual
+        required: true
+    source_refs:
+      - title: Microsoft Learn - ms-PKI-Certificate-Name-Flag
+        url: https://learn.microsoft.com/en-us/windows/win32/adschema/a-mspki-certificate-name-flag
+        type: schema
+
+  - id: ADCS-008
+    name: ESC8
+    family_id: adcs
+    type: technique
+    mitre_ids: ["T1557.001", "T1649"]
+    aliases: ["NTLM relay to AD CS web enrollment"]
+    description: Detects relayed NTLM authentication followed by certificate enrollment over HTTP.
+    core_preconditions:
+      - AD CS web enrollment exposed
+    required_signals:
+      - auth.ntlm_relay
+      - cert.enroll_http
+    optional_signals:
+      - rpc.coercion
+    response_candidates:
+      - contain-host
+      - approve-disable-template
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: ACL-004
+    name: Shadow Credentials
+    family_id: acl-delegation
+    type: technique
+    mitre_ids: ["T1556"]
+    aliases: ["msDS-KeyCredentialLink abuse"]
+    description: Detects unauthorized writes enabling certificate-backed takeover of an account.
+    core_preconditions:
+      - Write path to target user or computer object
+    required_signals:
+      - dir.attr_write:msDS-KeyCredentialLink
+      - cert.auth_pkinit
+    optional_signals:
+      - auth.source_mismatch
+    response_candidates:
+      - approve-revert-acl
+      - approve-disable-account
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+    signal_specs:
+      - kind: dir.attr_write:msDS-KeyCredentialLink
+        attributes: ["msDS-KeyCredentialLink"]
+        required: true
+      - kind: cert.auth_pkinit
+        protocols: ["PKINIT"]
+        required: true
+    source_refs:
+      - title: Microsoft Learn - msDS-KeyCredentialLink troubleshooting script
+        url: https://learn.microsoft.com/en-us/troubleshoot/windows-server/support-tools/script-to-view-msds-keycredentiallink-attribute-value
+        type: schema
+
+  - id: ACL-011
+    name: ForceChangePassword Abuse
+    family_id: acl-delegation
+    type: primitive
+    mitre_ids: ["T1098"]
+    aliases: ["ResetPassword right abuse"]
+    description: Detects password resets performed through delegated rights instead of normal self-service behavior.
+    core_preconditions:
+      - Reset password right on target principal
+    required_signals:
+      - dir.password_reset
+      - auth.actor_target_mismatch
+    optional_signals:
+      - dir.acl_change
+    response_candidates:
+      - approve-reset-password
+      - approve-revert-acl
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: ACL-017
+    name: SPN-Jacking / WriteSPN
+    family_id: acl-delegation
+    type: primitive
+    mitre_ids: ["T1098", "T1558.003"]
+    aliases: ["Targeted Kerberoast setup"]
+    description: Detects an SPN being written to an account to make it kerberoastable.
+    core_preconditions:
+      - Write access to target principal
+    required_signals:
+      - dir.attr_write:servicePrincipalName
+      - auth.kerberos.tgs
+    optional_signals:
+      - ldap.spn_query_burst
+    response_candidates:
+      - approve-revert-acl
+    detector_priority: high
+    response_priority: medium
+    demo_ready: true
+
+  - id: PERS-002
+    name: SIDHistory Injection
+    family_id: persistence
+    type: persistence
+    mitre_ids: ["T1134.005"]
+    aliases: ["Extra SID persistence"]
+    description: Detects privileged SIDs being injected into account history for persistence or cross-domain escalation.
+    core_preconditions:
+      - Write access to target principal
+    required_signals:
+      - dir.attr_write:sIDHistory
+      - auth.token_sid_anomaly
+    optional_signals:
+      - trust.cross_domain
+    response_candidates:
+      - approve-revert-acl
+      - approve-disable-account
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true
+
+  - id: LAT-005
+    name: PsExec / SMB Remote Execution
+    family_id: lateral-movement
+    type: technique
+    mitre_ids: ["T1021.002"]
+    aliases: ["PsExec", "ADMIN$ service execution"]
+    description: Detects authenticated remote execution over SMB admin shares and service creation.
+    core_preconditions:
+      - Administrative credentials on target host
+    required_signals:
+      - host.remote_service_create
+      - auth.admin_share
+    optional_signals:
+      - proc.psexec_pattern
+    response_candidates:
+      - contain-host
+    detector_priority: high
+    response_priority: high
+    demo_ready: true
+
+  - id: TRUST-007
+    name: MachineAccountQuota Abuse
+    family_id: trust-forest
+    type: technique
+    mitre_ids: ["T1136.002"]
+    aliases: ["MAQ abuse"]
+    description: Detects users creating machine accounts and then pivoting into delegation or trust abuse paths.
+    core_preconditions:
+      - MachineAccountQuota greater than zero
+    required_signals:
+      - dir.machine_create_burst
+      - policy.maq_nonzero
+    optional_signals:
+      - dir.attr_write:msDS-AllowedToActOnBehalfOfOtherIdentity
+    response_candidates:
+      - approve-remove-machine
+    detector_priority: high
+    response_priority: high
+    demo_ready: true
+
+  - id: GPO-001
+    name: Malicious GPO Modification
+    family_id: gpo-policy
+    type: technique
+    mitre_ids: ["T1484.001"]
+    aliases: ["Startup script deployment", "GPO scheduled task abuse"]
+    description: Detects high-risk changes to GPO objects and SYSVOL-backed execution content.
+    core_preconditions:
+      - GPO edit or link rights
+    required_signals:
+      - gpo.change
+      - files.sysvol_write
+    optional_signals:
+      - gpo.link_change
+      - gpo.task_deploy
+    response_candidates:
+      - approve-unlink-gpo
+    detector_priority: critical
+    response_priority: high
+    demo_ready: true

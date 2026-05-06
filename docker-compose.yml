@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ─────────────────────── Infrastructure ───────────────────────
   postgres:
@@ -33,6 +31,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: ad_nats
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: ad_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
 
   # ─────────────────────── Backend Services ─────────────────────
   inventory-service:
@@ -133,6 +154,165 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  signal-collector:
+    build:
+      context: ./backend
+      dockerfile: signal-collector/Dockerfile
+    container_name: ad_signal_collector
+    ports:
+      - "8091:8091"
+    environment:
+      HTTP_PORT: 8091
+      GRPC_PORT: 9091
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  signal-normalizer:
+    build:
+      context: ./backend
+      dockerfile: signal-normalizer/Dockerfile
+    container_name: ad_signal_normalizer
+    ports:
+      - "8092:8092"
+    environment:
+      HTTP_PORT: 8092
+      GRPC_PORT: 9092
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  detector-engine:
+    build:
+      context: ./backend
+      dockerfile: detector-engine/Dockerfile
+    container_name: ad_detector_engine
+    ports:
+      - "8093:8093"
+    environment:
+      HTTP_PORT: 8093
+      GRPC_PORT: 9093
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    restart: unless-stopped
+
+  correlation-engine:
+    build:
+      context: ./backend
+      dockerfile: correlation-engine/Dockerfile
+    container_name: ad_correlation_engine
+    ports:
+      - "8094:8094"
+    environment:
+      HTTP_PORT: 8094
+      GRPC_PORT: 9094
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    restart: unless-stopped
+
+  response-orchestrator:
+    build:
+      context: ./backend
+      dockerfile: response-orchestrator/Dockerfile
+    container_name: ad_response_orchestrator
+    ports:
+      - "8095:8095"
+    environment:
+      HTTP_PORT: 8095
+      GRPC_PORT: 9095
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  evidence-ledger:
+    build:
+      context: ./backend
+      dockerfile: evidence-ledger/Dockerfile
+    container_name: ad_evidence_ledger
+    ports:
+      - "8096:8096"
+    environment:
+      HTTP_PORT: 8096
+      GRPC_PORT: 9096
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+      MINIO_BUCKET: yama-evidence
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  policy-engine:
+    build:
+      context: ./backend
+      dockerfile: policy-engine/Dockerfile
+    container_name: ad_policy_engine
+    ports:
+      - "8097:8097"
+    environment:
+      HTTP_PORT: 8097
+      GRPC_PORT: 9097
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  defense-api:
+    build:
+      context: ./backend
+      dockerfile: defense-api/Dockerfile
+    container_name: ad_defense_api
+    ports:
+      - "8098:8098"
+    environment:
+      HTTP_PORT: 8098
+      GRPC_PORT: 9098
+      DB_DSN: postgres://adassess:adassess_secret@postgres:5432/adassessment?sslmode=disable
+      REDIS_URL: redis://:redis_secret@redis:6379/0
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ─────────────────────── Frontend ─────────────────────────────
   frontend:
     build:
@@ -148,3 +328,5 @@ services:
 volumes:
   pg_data:
   redis_data:
+  nats_data:
+  minio_data:

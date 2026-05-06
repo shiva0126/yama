@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package defense.v1;
+
+option go_package = "ad-assessment/defense-shared/proto/defense/v1;defensev1";
+
+message HealthRequest {}
+
+message HealthResponse {
+  string service = 1;
+  string status = 2;
+}
+
+message EventEnvelope {
+  string id = 1;
+  string kind = 2;
+  string occurred_at = 3;
+  string domain = 4;
+  string source_host = 5;
+  string target_host = 6;
+  string actor = 7;
+  string actor_sid = 8;
+  string target_dn = 9;
+  string object_class = 10;
+  string channel = 11;
+  string raw_ref = 12;
+  map<string, string> attributes = 13;
+}
+
+message DetectionEnvelope {
+  string id = 1;
+  string detector_id = 2;
+  string title = 3;
+  string confidence = 4;
+  string severity = 5;
+  string occurred_at = 6;
+  string domain = 7;
+  string source_host = 8;
+  string actor = 9;
+  string target = 10;
+  repeated string evidence_refs = 11;
+  map<string, string> metadata = 12;
+}
+
+message IncidentEnvelope {
+  string id = 1;
+  string title = 2;
+  string severity = 3;
+  string confidence = 4;
+  string status = 5;
+  string primary_actor = 6;
+  string primary_target = 7;
+  string opened_at = 8;
+  string last_updated_at = 9;
+  repeated string detection_ids = 10;
+  repeated string response_actions = 11;
+  map<string, string> metadata = 12;
+}

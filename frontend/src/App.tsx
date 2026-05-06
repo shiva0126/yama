@@ -45,8 +45,9 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard />} />
+        <Route index element={<Navigate to="/overview" replace />} />
+        <Route path="overview" element={<Dashboard />} />
+        <Route path="dashboard" element={<Navigate to="/overview" replace />} />
         <Route path="scanner" element={<Scanner />} />
         <Route path="agents" element={<Agents />} />
         <Route path="inventory" element={<Inventory />} />
@@ -54,7 +55,7 @@ function AppRoutes() {
         <Route path="topology" element={<Topology />} />
         <Route path="reports" element={<Reports />} />
       </Route>
-      <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/login" element={<Navigate to="/overview" replace />} />
     </Routes>
   )
 }

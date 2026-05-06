@@ -3,8 +3,17 @@ go 1.22
 use (
 	./analysis-engine
 	./api-gateway
+	./correlation-engine
+	./defense-api
+	./defense-shared
+	./detector-engine
+	./evidence-ledger
 	./inventory-service
+	./policy-engine
 	./report-service
+	./response-orchestrator
 	./scan-orchestrator
 	./shared
+	./signal-collector
+	./signal-normalizer
 )

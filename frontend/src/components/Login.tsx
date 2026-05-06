@@ -17,7 +17,7 @@ export function Login() {
     try {
       const response = await authApi.login(username, password)
       localStorage.setItem('auth_token', response.data.token)
-      navigate('/dashboard')
+      navigate('/overview')
     } catch {
       setError('Invalid credentials')
     } finally {
@@ -31,7 +31,7 @@ export function Login() {
         <div className="hidden xl:block">
           <div className="panel-strong p-10">
             <h1 className="text-5xl font-semibold tracking-tight text-white">Yama</h1>
-            <p className="mt-4 max-w-xl text-base leading-8 text-slate-400">Active Directory security operations.</p>
+            <p className="mt-4 max-w-xl text-base leading-8 text-slate-600">Active Directory exposure analysis for analysts, operators, and leadership.</p>
           </div>
         </div>
 
@@ -40,8 +40,8 @@ export function Login() {
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-sky-400/20 bg-sky-400/10">
               <img src="/yama.svg" className="h-10 w-10" alt="Yama" />
             </div>
-            <h2 className="mt-5 text-3xl font-semibold text-white">Sign in to Yama</h2>
-            <p className="mt-2 text-sm text-slate-400">Security Console</p>
+            <h2 className="mt-5 text-3xl font-semibold text-slate-950">Sign in to Yama</h2>
+            <p className="mt-2 text-sm text-slate-600">Security console</p>
           </div>
 
           <form onSubmit={handleLogin} className="panel p-6">
