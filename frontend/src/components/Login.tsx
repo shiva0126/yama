@@ -1,80 +1,68 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Shield } from 'lucide-react'
 import { authApi } from '../api'
 
 export function Login() {
-  const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [error, setError]       = useState('')
+  const [loading, setLoading]   = useState(false)
 
-  const handleLogin = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setLoading(true)
-    setError('')
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoading(true); setError('')
     try {
-      const response = await authApi.login(username, password)
-      localStorage.setItem('auth_token', response.data.token)
-      navigate('/overview')
-    } catch {
-      setError('Invalid credentials')
-    } finally {
-      setLoading(false)
-    }
+      const res = await authApi.login(username, password)
+      localStorage.setItem('auth_token', res.data.token)
+      window.location.href = '/'
+    } catch { setError('Invalid username or password') }
+    finally   { setLoading(false) }
   }
 
   return (
-    <div className="min-h-screen bg-transparent px-4 py-10">
-      <div className="mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-8 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="hidden xl:block">
-          <div className="panel-strong p-10">
-            <h1 className="text-5xl font-semibold tracking-tight text-white">Yama</h1>
-            <p className="mt-4 max-w-xl text-base leading-8 text-slate-600">Active Directory exposure analysis for analysts, operators, and leadership.</p>
+    <div style={{ minHeight:'100vh', background:'#f4f6f9', display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ width:360 }}>
+        {/* Brand */}
+        <div style={{ textAlign:'center', marginBottom:28 }}>
+          <div style={{
+            width:48, height:48, borderRadius:12, margin:'0 auto 14px',
+            background:'#eff6ff', border:'1px solid #bfdbfe',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <Shield size={22} color="#2563eb" />
+          </div>
+          <div style={{ fontSize:22, fontWeight:700, color:'#0f1923', letterSpacing:'-0.02em' }}>Yama</div>
+          <div style={{ fontSize:12, color:'#8a9ab5', marginTop:3, fontWeight:500 }}>
+            Active Directory Security Platform
           </div>
         </div>
 
-        <div className="mx-auto w-full max-w-md">
-          <div className="mb-8 text-center">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl border border-sky-400/20 bg-sky-400/10">
-              <img src="/yama.svg" className="h-10 w-10" alt="Yama" />
+        {/* Card */}
+        <div className="card" style={{ padding:24 }}>
+          <div style={{ fontSize:15, fontWeight:600, color:'#0f1923', marginBottom:20 }}>Sign in to your account</div>
+          <form onSubmit={submit} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+            <div>
+              <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#4b5c72', marginBottom:6 }}>Username</label>
+              <input className="field" value={username} onChange={e => setUsername(e.target.value)} placeholder="admin" autoFocus autoComplete="username" />
             </div>
-            <h2 className="mt-5 text-3xl font-semibold text-slate-950">Sign in to Yama</h2>
-            <p className="mt-2 text-sm text-slate-600">Security console</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="panel p-6">
-            <div className="space-y-4">
-              <label className="block">
-                <span className="label">Username</span>
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin"
-                  className="input mt-2"
-                />
-              </label>
-
-              <label className="block">
-                <span className="label">Password</span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="input mt-2"
-                />
-              </label>
+            <div>
+              <label style={{ display:'block', fontSize:12, fontWeight:600, color:'#4b5c72', marginBottom:6 }}>Password</label>
+              <input className="field" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" />
             </div>
-
-            {error && <p className="mt-4 text-sm text-red-300">{error}</p>}
-
-            <button type="submit" disabled={loading} className="btn-primary mt-6 w-full">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {loading ? 'Signing in' : 'Enter console'}
+            {error && (
+              <div style={{ fontSize:12, color:'#b91c1c', background:'#fef2f2', border:'1px solid #fecaca', borderRadius:6, padding:'8px 12px' }}>
+                {error}
+              </div>
+            )}
+            <button type="submit" className="btn btn-primary" disabled={loading || !username || !password}
+              style={{ width:'100%', justifyContent:'center', padding:'9px 0', fontSize:14, marginTop:4 }}>
+              {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+        </div>
+
+        <div style={{ textAlign:'center', marginTop:18, fontSize:11, color:'#c4cdd8' }}>
+          Yama AD Security Platform · Confidential
         </div>
       </div>
     </div>

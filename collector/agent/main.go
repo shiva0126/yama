@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -57,11 +58,14 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"service": "collector-agent",
-			"version": "1.0.0",
+			"version": "1.1.0",
 			"capabilities": []string{
 				"topology", "users", "groups", "computers",
-				"gpos", "kerberos", "acls", "dcinfo", "trusts", "ous",
+				"gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp",
+				"defense:signal-forward", "defense:status",
 			},
+			"defense_mode": os.Getenv("DEFENSE_MODE") == "true",
+			"platform":     runtime.GOOS,
 		})
 	})
 
@@ -79,6 +83,21 @@ func main() {
 		collect.POST("/trusts",    h.CollectTrusts)
 		collect.POST("/ous",       h.CollectOUs)
 		collect.POST("/fgpp",      h.CollectFGPP)
+	}
+
+	// Defense endpoints — forward signals to the Yama signal-collector service
+	defend := r.Group("/defend")
+	{
+		defend.GET("/status", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"defense_mode":   os.Getenv("DEFENSE_MODE") == "true",
+				"signal_backend": os.Getenv("SIGNAL_COLLECTOR_URL"),
+				"agent_id":       os.Getenv("AGENT_ID"),
+				"capabilities":   []string{"signal-forward", "account-disable", "audit-log"},
+			})
+		})
+
+		defend.POST("/signal", h.ForwardSignal)
 	}
 
 	srv := &http.Server{

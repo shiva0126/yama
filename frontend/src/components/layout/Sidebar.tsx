@@ -1,171 +1,150 @@
-import { NavLink } from 'react-router-dom'
-import {
-  Activity,
-  AlertTriangle,
-  BarChart3,
-  Boxes,
-  ChevronsLeft,
-  ChevronsRight,
-  FileSpreadsheet,
-  Fingerprint,
-  Flame,
-  LogOut,
-  Network,
-  Radar,
-  Shield,
-  ShieldCheck,
-  ShieldQuestion,
-  Waypoints,
-} from 'lucide-react'
-import clsx from 'clsx'
+import { NavLink, useNavigate } from 'react-router-dom'
+import type { LucideIcon } from 'lucide-react'
+import { Database, FileText, LogOut, Map, Radio, Server, Settings, Shield, User } from 'lucide-react'
 
-const navGroups = [
-  {
-    title: 'Defense Plane',
-    items: [
-      { to: '/defense', label: 'Defense Overview', icon: ShieldCheck },
-      { to: '/defense/incidents', label: 'Incidents', icon: AlertTriangle },
-      { to: '/defense/catalog', label: 'Attack Catalog', icon: Flame },
-      { to: '/defense/response', label: 'Response', icon: Fingerprint },
-      { to: '/defense/evidence', label: 'Evidence', icon: FileSpreadsheet },
-      { to: '/defense/policy', label: 'Policy', icon: ShieldQuestion },
-    ],
-  },
-  {
-    title: 'Assessment Plane',
-    items: [
-      { to: '/overview', label: 'Overview', icon: Shield },
-      { to: '/scanner', label: 'Assessments', icon: Radar },
-      { to: '/findings', label: 'Exposure Queue', icon: Activity },
-      { to: '/inventory', label: 'Directory', icon: Boxes },
-      { to: '/topology', label: 'Attack Surface', icon: Waypoints },
-      { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
-      { to: '/agents', label: 'Agents', icon: Network },
-    ],
-  },
+interface NavItem { to: string; label: string; icon: LucideIcon; exact?: boolean }
+
+const ASSESS: NavItem[] = [
+  { to: '/',          label: 'Overview',   icon: Map,      exact: true },
+  { to: '/assess',    label: 'Assessment', icon: Radio },
+  { to: '/directory', label: 'Directory',  icon: Database },
+]
+const DEFEND: NavItem[] = [
+  { to: '/defend', label: 'Defend', icon: Shield },
+]
+const MANAGE: NavItem[] = [
+  { to: '/reports',  label: 'Reports',  icon: FileText },
+  { to: '/agents',   label: 'Agents',   icon: Server },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
-interface SidebarProps {
-  collapsed: boolean
-  onToggle: () => void
-}
-
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
-  const handleLogout = () => {
-    localStorage.removeItem('auth_token')
-    window.location.href = '/login'
-  }
+export function Sidebar() {
+  const navigate = useNavigate()
+  const logout = () => { localStorage.removeItem('auth_token'); navigate('/login') }
 
   return (
-    <aside
-      className={clsx(
-        'sticky top-0 flex h-screen shrink-0 flex-col border-r border-slate-950/10 bg-[linear-gradient(180deg,#0a1420_0%,#0d1827_55%,#0f1c2d_100%)] shadow-[18px_0_36px_rgba(15,23,42,0.12)] transition-[width] duration-200',
-        collapsed ? 'w-[84px]' : 'w-[280px]'
-      )}
-    >
-      <div className={clsx('flex items-center border-b border-white/10 px-4 py-5', collapsed ? 'justify-center' : 'justify-between')}>
-        <div className={clsx('flex items-center gap-3', collapsed && 'justify-center')}>
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-sky-300/20 bg-sky-400/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-            <img src="/yama.svg" className="h-7 w-7" alt="Yama" />
-          </div>
-          {!collapsed && (
-              <div className="min-w-0">
-                <p className="text-base font-semibold tracking-[0.04em] text-slate-50">Yama</p>
-                <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400/75">AD Security Console</p>
-              </div>
-            )}
-          </div>
+    <aside style={{
+      width: 220, flexShrink: 0,
+      display: 'flex', flexDirection: 'column',
+      background: 'var(--sb-bg)',
+      height: '100vh',
+      borderRight: '1px solid var(--sb-border)',
+      transition: 'background 0.3s',
+    }}>
 
-        {!collapsed && (
-          <button
-            type="button"
-            onClick={onToggle}
-            className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200"
-            aria-label="Collapse sidebar"
-          >
-            <ChevronsLeft className="h-4 w-4" />
-          </button>
-        )}
+      {/* Logo */}
+      <div style={{
+        height: 60, display: 'flex', alignItems: 'center',
+        padding: '0 18px', gap: 11,
+        borderBottom: '1px solid var(--sb-border)', flexShrink: 0,
+      }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+          background: 'rgba(var(--accent-rgb, 37 99 235) / 0.2)',
+          border: '1px solid var(--accent-bd)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 0 12px rgba(37,99,235,0.12)',
+        }}>
+          <Shield size={16} color="var(--accent)" />
+        </div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sb-act)', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+            Yama
+          </div>
+          <div style={{ fontSize: 9, color: 'var(--sb-dim)', fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase' }}>
+            AD Security
+          </div>
+        </div>
       </div>
 
-      <div className={clsx('flex-1 overflow-y-auto py-5', collapsed ? 'px-3' : 'px-4')}>
-        <nav className={clsx('space-y-5', collapsed ? 'mt-0' : 'mt-3')}>
-          {navGroups.map((group) => (
-            <div key={group.title} className="space-y-2">
-              {!collapsed && <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400/70">{group.title}</p>}
-              <div className="space-y-1.5">
-                {group.items.map(({ to, label, icon: Icon }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    title={collapsed ? label : undefined}
-                    className={({ isActive }) =>
-                      clsx(
-                        'group flex items-center rounded-2xl border transition',
-                        collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-3 py-3.5',
-                        isActive
-                          ? 'border-sky-300/25 bg-sky-400/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_10px_24px_rgba(2,132,199,0.08)]'
-                          : 'border-transparent hover:border-white/8 hover:bg-white/[0.04]'
-                      )
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <div
-                          className={clsx(
-                            'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition',
-                            isActive
-                              ? 'border-sky-300/24 bg-white text-sky-700'
-                              : 'border-white/8 bg-white/[0.03] text-slate-500 group-hover:text-slate-200'
-                          )}
-                        >
-                          <Icon className="h-[18px] w-[18px]" />
-                        </div>
-                        {!collapsed && (
-                          <div className="min-w-0">
-                            <p className={clsx('text-sm font-semibold', isActive ? 'text-white' : 'text-slate-300')}>{label}</p>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-      </div>
+      {/* Nav */}
+      <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '14px 10px 10px' }}>
+        <NavGroup label="Assess" items={ASSESS} />
+        <NavGroup label="Defend" items={DEFEND} accent />
+        <NavGroup label="Manage" items={MANAGE} />
+      </nav>
 
-      <div className={clsx('border-t border-white/10 py-4', collapsed ? 'px-3' : 'px-4')}>
-        {collapsed ? (
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={onToggle}
-              className="flex h-12 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-400 transition hover:bg-white/[0.08] hover:text-slate-200"
-              aria-label="Expand sidebar"
-              title="Expand"
-            >
-              <ChevronsRight className="h-4 w-4" />
-            </button>
-            <button
-              onClick={handleLogout}
-              className="flex h-12 w-full items-center justify-center rounded-2xl border border-transparent text-slate-400 transition hover:border-red-500/20 hover:bg-red-500/8 hover:text-red-300"
-              title="Sign out"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+      {/* User section */}
+      <div style={{ borderTop: '1px solid var(--sb-border)', padding: '12px 10px', flexShrink: 0 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '9px 12px', borderRadius: 8,
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid var(--sb-border)',
+        }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+            background: 'var(--accent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 12, fontWeight: 700, color: '#fff',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+          }}>
+            A
           </div>
-        ) : (
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sb-act)', lineHeight: 1.3 }}>admin</div>
+            <div style={{ fontSize: 10, color: 'var(--sb-dim)' }}>Administrator</div>
+          </div>
           <button
-            onClick={handleLogout}
-            className="flex w-full items-center gap-3 rounded-2xl border border-transparent px-4 py-3 text-sm font-medium text-slate-400 transition hover:border-red-500/20 hover:bg-red-500/8 hover:text-red-300"
+            onClick={logout}
+            title="Sign out"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--sb-dim)', padding: 4, borderRadius: 5, display: 'flex',
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--sb-dim)')}
           >
-            <LogOut className="h-4 w-4" />
-            <span>Sign out</span>
+            <LogOut size={13} />
           </button>
-        )}
+        </div>
       </div>
     </aside>
+  )
+}
+
+function NavGroup({ label, items, accent }: { label: string; items: NavItem[]; accent?: boolean }) {
+  return (
+    <div style={{ marginBottom: 4 }}>
+      <div style={{
+        fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase',
+        color: accent ? 'color-mix(in srgb, var(--accent) 55%, transparent)' : 'color-mix(in srgb, var(--sb-act) 25%, transparent)',
+        padding: '8px 12px 5px',
+      }}>
+        {label}
+      </div>
+      {items.map(item => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.exact}
+          style={({ isActive }) => ({
+            display: 'flex', alignItems: 'center', gap: 9,
+            padding: '8px 12px',
+            borderRadius: 7, textDecoration: 'none',
+            fontSize: 13, fontWeight: isActive ? 600 : 400,
+            marginBottom: 2,
+            color: isActive ? 'var(--sb-act)' : 'var(--sb-txt)',
+            background: isActive
+              ? (accent ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'rgba(255,255,255,0.08)')
+              : 'transparent',
+            borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,
+            transition: 'all 0.12s',
+          })}
+        >
+          {({ isActive }) => (
+            <>
+              <item.icon
+                size={15}
+                color={isActive ? 'var(--accent)' : 'var(--sb-txt)'}
+                style={{ flexShrink: 0, transition: 'color 0.12s' }}
+              />
+              {item.label}
+            </>
+          )}
+        </NavLink>
+      ))}
+    </div>
   )
 }

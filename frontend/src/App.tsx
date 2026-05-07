@@ -1,47 +1,32 @@
 import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ThemeProvider } from './contexts/ThemeContext'
 import { Layout } from './components/layout/Layout'
-import { Dashboard } from './components/Dashboard'
-import { Scanner } from './components/Scanner'
-import { Agents } from './components/Agents'
-import { Inventory } from './components/Inventory'
-import { Findings } from './components/Findings'
-import { Topology } from './components/Topology'
-import { Reports } from './components/Reports'
 import { Login } from './components/Login'
-import {
-  DefenseCatalog,
-  DefenseEvidence,
-  DefenseIncidents,
-  DefenseOverview,
-  DefensePolicy,
-  DefenseResponse,
-} from './components/Defense'
+import { Overview } from './components/Overview'
+import { Assess } from './components/Assess'
+import { Directory } from './components/Directory'
+import { Defend } from './components/Defend'
+import { Reports } from './components/Reports'
+import { Agents } from './components/Agents'
+import { Settings } from './components/Settings'
+import { Chatbot } from './components/Chatbot'
 import { useScanStore } from './stores/scanStore'
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: 2,
-    },
-  },
+const qc = new QueryClient({
+  defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } },
 })
 
 function AppRoutes() {
   const { connectWebSocket } = useScanStore()
+  const isAuth = !!localStorage.getItem('auth_token')
 
   useEffect(() => {
-    const token = localStorage.getItem('auth_token')
-    if (token) {
-      connectWebSocket()
-    }
-  }, [connectWebSocket])
+    if (isAuth) connectWebSocket()
+  }, [isAuth, connectWebSocket])
 
-  const isAuthenticated = !!localStorage.getItem('auth_token')
-
-  if (!isAuthenticated) {
+  if (!isAuth) {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -51,35 +36,33 @@ function AppRoutes() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/defense" replace />} />
-        <Route path="defense" element={<DefenseOverview />} />
-        <Route path="defense/incidents" element={<DefenseIncidents />} />
-        <Route path="defense/catalog" element={<DefenseCatalog />} />
-        <Route path="defense/response" element={<DefenseResponse />} />
-        <Route path="defense/evidence" element={<DefenseEvidence />} />
-        <Route path="defense/policy" element={<DefensePolicy />} />
-        <Route path="overview" element={<Dashboard />} />
-        <Route path="dashboard" element={<Navigate to="/overview" replace />} />
-        <Route path="scanner" element={<Scanner />} />
-        <Route path="agents" element={<Agents />} />
-        <Route path="inventory" element={<Inventory />} />
-        <Route path="findings" element={<Findings />} />
-        <Route path="topology" element={<Topology />} />
-        <Route path="reports" element={<Reports />} />
-      </Route>
-      <Route path="/login" element={<Navigate to="/defense" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<Overview />} />
+          <Route path="assess"    element={<Assess />} />
+          <Route path="directory" element={<Directory />} />
+          <Route path="defend"    element={<Defend />} />
+          <Route path="reports"   element={<Reports />} />
+          <Route path="agents"    element={<Agents />} />
+          <Route path="settings"  element={<Settings />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+        <Route path="/login" element={<Navigate to="/" replace />} />
+      </Routes>
+      <Chatbot />
+    </>
   )
 }
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+    <QueryClientProvider client={qc}>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

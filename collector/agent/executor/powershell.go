@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"go.uber.org/zap"
@@ -22,8 +23,29 @@ func New(psDir, csDir string, logger *zap.Logger) *Executor {
 	return &Executor{psDir: psDir, csDir: csDir, logger: logger}
 }
 
+// psExecutable returns the PowerShell binary name for the current OS.
+// On Windows: powershell.exe. On Linux/Mac: pwsh (PowerShell Core).
+func psExecutable() (string, error) {
+	if runtime.GOOS == "windows" {
+		return "powershell.exe", nil
+	}
+	if path, err := exec.LookPath("pwsh"); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf("PowerShell not found: install PowerShell Core (pwsh) on this host")
+}
+
 // RunPowerShell executes a .ps1 module and returns parsed JSON output
 func (e *Executor) RunPowerShell(scriptName, domain string, extraArgs ...string) (map[string]interface{}, error) {
+	psExe, err := psExecutable()
+	if err != nil {
+		return map[string]interface{}{
+			"error":  err.Error(),
+			"note":   "PowerShell collection unavailable on this host. LDAP-based scan is used instead.",
+			"domain": domain,
+		}, nil
+	}
+
 	scriptPath := filepath.Join(e.psDir, scriptName)
 
 	args := []string{
@@ -38,12 +60,13 @@ func (e *Executor) RunPowerShell(scriptName, domain string, extraArgs ...string)
 	e.logger.Info("running PowerShell script",
 		zap.String("script", scriptName),
 		zap.String("domain", domain),
+		zap.String("executable", psExe),
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "powershell.exe", args...)
+	cmd := exec.CommandContext(ctx, psExe, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
