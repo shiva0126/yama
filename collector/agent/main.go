@@ -69,7 +69,8 @@ func main() {
 			"version": "1.1.0",
 			"capabilities": []string{
 				"topology", "users", "groups", "computers",
-				"gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp",
+				"gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp", "adcs", "sites",
+				"service-identities", "ad-vuln-scan",
 				"defense:signal-forward", "defense:status", "defense:execute",
 			},
 			"defense_mode": os.Getenv("DEFENSE_MODE") == "true",

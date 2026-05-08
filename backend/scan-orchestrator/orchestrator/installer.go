@@ -424,7 +424,11 @@ func (o *Orchestrator) runInstall(job *InstallJob, req InstallRequest) {
 		`INSERT INTO agents (id, name, hostname, domain, ip_address, api_key, status, last_seen, version, capabilities)
 		 VALUES ($1, $2, $3, $4, $5, $6, 'online', NOW(), '1.0.0', $7)`,
 		installAgentID, req.AgentName, hostname, req.Domain, req.TargetIP, installAPIKey,
-		[]string{"topology", "users", "groups", "computers", "gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp", "adcs", "sites", "defense:signal-forward", "defense:execute"},
+		[]string{
+			"topology", "users", "groups", "computers", "gpos", "kerberos", "acls", "dcinfo",
+			"trusts", "ous", "fgpp", "adcs", "sites", "service-identities", "ad-vuln-scan",
+			"defense:signal-forward", "defense:status", "defense:execute",
+		},
 	)
 	if err != nil {
 		job.Error = fmt.Sprintf("Agent installed but DB registration failed: %v", err)

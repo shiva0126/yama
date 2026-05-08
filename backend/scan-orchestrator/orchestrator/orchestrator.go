@@ -29,6 +29,27 @@ type Orchestrator struct {
 	client *http.Client
 }
 
+var defaultAgentCapabilities = []string{
+	"topology",
+	"users",
+	"groups",
+	"computers",
+	"gpos",
+	"kerberos",
+	"acls",
+	"dcinfo",
+	"trusts",
+	"ous",
+	"fgpp",
+	"adcs",
+	"sites",
+	"service-identities",
+	"ad-vuln-scan",
+	"defense:signal-forward",
+	"defense:status",
+	"defense:execute",
+}
+
 func New(db *pgxpool.Pool, rdb *redis.Client, cfg *config.Config, logger *zap.Logger) *Orchestrator {
 	return &Orchestrator{
 		db:     db,
@@ -62,6 +83,9 @@ func (o *Orchestrator) RegisterAgent(c *gin.Context) {
 	if req.Port == 0 {
 		req.Port = 389
 	}
+	if len(req.Capabilities) == 0 {
+		req.Capabilities = defaultAgentCapabilities
+	}
 
 	apiKey := generateAPIKey()
 	id := uuid.New().String()
@@ -88,7 +112,7 @@ func (o *Orchestrator) RegisterAgent(c *gin.Context) {
 
 func (o *Orchestrator) ListAgents(c *gin.Context) {
 	rows, err := o.db.Query(context.Background(),
-		`SELECT id, name, hostname, domain, ip_address, port, status, last_seen, version FROM agents ORDER BY created_at DESC`)
+		`SELECT id, name, hostname, domain, ip_address, port, status, last_seen, version, capabilities FROM agents ORDER BY created_at DESC`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -98,7 +122,7 @@ func (o *Orchestrator) ListAgents(c *gin.Context) {
 	var agents []types.CollectorAgent
 	for rows.Next() {
 		var a types.CollectorAgent
-		rows.Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Port, &a.Status, &a.LastSeen, &a.Version)
+		rows.Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Port, &a.Status, &a.LastSeen, &a.Version, &a.Capabilities)
 		agents = append(agents, a)
 	}
 	c.JSON(http.StatusOK, gin.H{"agents": agents, "total": len(agents)})
@@ -108,8 +132,8 @@ func (o *Orchestrator) GetAgent(c *gin.Context) {
 	id := c.Param("id")
 	var a types.CollectorAgent
 	err := o.db.QueryRow(context.Background(),
-		`SELECT id, name, hostname, domain, ip_address, port, status, last_seen, version FROM agents WHERE id=$1`, id,
-	).Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Port, &a.Status, &a.LastSeen, &a.Version)
+		`SELECT id, name, hostname, domain, ip_address, port, status, last_seen, version, capabilities FROM agents WHERE id=$1`, id,
+	).Scan(&a.ID, &a.Name, &a.Hostname, &a.Domain, &a.IPAddress, &a.Port, &a.Status, &a.LastSeen, &a.Version, &a.Capabilities)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
