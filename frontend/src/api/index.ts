@@ -3,27 +3,24 @@ import type {
   ScanJob, ScanRequest, CollectorAgent, Finding, ScoreCard,
   ADUser, ADGroup, ADComputer, ADGPO, ADDomainController, SecurityIndicator,
   InstallRequest, InstallJob, OverviewSummary,
-  DefenseCatalogSummary, DefenseDetection, DefenseIncident, DefensePolicySummary, EvidenceBundle, EvidenceBundleRequest,
+  DefenseCatalogSummary, DefenseDetection, DefenseIncident, DefensePolicySummary,
+  EvidenceBundle, EvidenceBundleRequest, ResponseAction,
+  ADVulnerability, BulkDCInstallRequest, BulkDCInstallResponse, ServiceIdentity,
 } from '../types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-const DEFENSE_BASE_URL = import.meta.env.VITE_DEFENSE_API_BASE_URL || '/defense-api'
 
 const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Attach JWT token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
-// Redirect on 401
 api.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -34,6 +31,39 @@ api.interceptors.response.use(
     return Promise.reject(err)
   }
 )
+
+// ─── Defense API (defense-api:8098) ─────────────────────────────────────────
+const defenseApiClient = axios.create({
+  baseURL: import.meta.env.VITE_DEFENSE_API_BASE_URL || '/defense-api',
+  headers: { 'Content-Type': 'application/json' },
+})
+defenseApiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// ─── Evidence Ledger (evidence-ledger:8096) ──────────────────────────────────
+const evidenceApiClient = axios.create({
+  baseURL: import.meta.env.VITE_EVIDENCE_API_BASE_URL || '/evidence-api',
+  headers: { 'Content-Type': 'application/json' },
+})
+evidenceApiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// ─── Policy Engine (policy-engine:8097) ──────────────────────────────────────
+const policyApiClient = axios.create({
+  baseURL: import.meta.env.VITE_POLICY_API_BASE_URL || '/policy-api',
+  headers: { 'Content-Type': 'application/json' },
+})
+policyApiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('auth_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
 
 // ============================================================
 // Auth
@@ -55,6 +85,8 @@ export const agentsApi = {
   status: (id: string) => api.get<{ status: string; last_seen: string }>(`/agents/${id}/status`),
   install: (data: InstallRequest) =>
     api.post<{ job_id: string; message: string }>('/agents/install', data),
+  installBulkDCs: (data: BulkDCInstallRequest) =>
+    api.post<BulkDCInstallResponse>('/agents/install/bulk-dcs', data),
   listInstallJobs: () => api.get<{ jobs: InstallJob[] }>('/agents/install'),
   getInstallStatus: (jobId: string) => api.get<InstallJob>(`/agents/install/${jobId}`),
 }
@@ -88,6 +120,10 @@ export const inventoryApi = {
   getDomainControllers: (snapshotId: string) =>
     api.get<{ items: ADDomainController[]; total: number }>(`/inventory/snapshots/${snapshotId}/dcs`),
   getTopology: (snapshotId: string) => api.get(`/inventory/snapshots/${snapshotId}/topology`),
+  getServiceIdentities: (snapshotId: string) =>
+    api.get<{ items: ServiceIdentity[]; total: number }>(`/inventory/snapshots/${snapshotId}/service-identities`),
+  getVulnerabilities: (snapshotId: string) =>
+    api.get<{ items: ADVulnerability[]; total: number }>(`/inventory/snapshots/${snapshotId}/vulnerabilities`),
 }
 
 // ============================================================
@@ -110,27 +146,132 @@ export const overviewApi = {
   summary: () => api.get<OverviewSummary>('/overview/summary'),
 }
 
-const defenseApiClient = axios.create({
-  baseURL: `${DEFENSE_BASE_URL}`,
-  headers: { 'Content-Type': 'application/json' },
-})
-
-defenseApiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
-
+// ============================================================
+// Defense (defense-api:8098)
+// ============================================================
 export const defenseApi = {
-  summary: () => defenseApiClient.get<DefenseCatalogSummary>('/catalog/summary'),
-  catalog: () => defenseApiClient.get('/catalog'),
-  detections: () => defenseApiClient.get<DefenseDetection[]>('/detections/demo'),
-  incidents: () => defenseApiClient.get<DefenseIncident[]>('/incidents/demo'),
-  policy: () => defenseApiClient.get<DefensePolicySummary>('/policy/demo'),
-  plan: (incident: DefenseIncident) => defenseApiClient.post('/plan', incident),
-  evidence: (payload: EvidenceBundleRequest) => defenseApiClient.post<EvidenceBundle>('/evidence/bundle', payload),
+  summary:    () => defenseApiClient.get<DefenseCatalogSummary>('/catalog/summary'),
+  catalog:    () => defenseApiClient.get('/catalog'),
+  incidents:  () =>
+    defenseApiClient
+      .get<{ incidents?: Array<Partial<DefenseIncident>> }>('/incidents')
+      .then((r) => ({
+        ...r,
+        data: (r.data.incidents ?? []).map((incident) => ({
+          id: incident.id ?? '',
+          title: incident.title ?? 'Untitled incident',
+          severity: (incident.severity ?? 'info') as DefenseIncident['severity'],
+          confidence: incident.confidence ?? 'unknown',
+          status: incident.status ?? 'open',
+          primary_actor: incident.primary_actor ?? '',
+          primary_target: incident.primary_target ?? '',
+          opened_at: incident.opened_at ?? new Date().toISOString(),
+          last_updated_at: incident.last_updated_at ?? incident.opened_at ?? new Date().toISOString(),
+          detection_ids: incident.detection_ids ?? [],
+          response_actions: incident.response_actions ?? [],
+          metadata: incident.metadata ?? {},
+        })),
+      })),
+  detections: () =>
+    defenseApiClient
+      .get<{ detections?: Array<Partial<DefenseDetection> & { detected_at?: string }> }>('/detections')
+      .then((r) => ({
+        ...r,
+        data: (r.data.detections ?? []).map((detection) => ({
+          id: detection.id ?? '',
+          detector_id: detection.detector_id ?? '',
+          title: detection.title ?? 'Untitled detection',
+          confidence: detection.confidence ?? 'unknown',
+          severity: (detection.severity ?? 'info') as DefenseDetection['severity'],
+          occurred_at: detection.occurred_at ?? detection.detected_at ?? new Date().toISOString(),
+          domain: detection.domain ?? '',
+          source_host: detection.source_host ?? '',
+          actor: detection.actor ?? '',
+          target: detection.target ?? '',
+          evidence_refs: detection.evidence_refs ?? [],
+          metadata: detection.metadata ?? {},
+        })),
+      })),
+  responses:  () =>
+    defenseApiClient
+      .get<{ actions?: Array<Partial<ResponseAction> & { created_at?: string }> }>('/responses')
+      .then((r) => ({
+        ...r,
+        data: (r.data.actions ?? []).map((action) => ({
+          id: action.id ?? '',
+          incident_id: action.incident_id ?? '',
+          action_type: action.action_type ?? '',
+          mode: action.mode ?? 'approval-required',
+          status: action.status ?? 'planned',
+          target_type: action.target_type ?? '',
+          target_value: action.target_value ?? '',
+          result_summary: action.result_summary ?? '',
+          rollback_data: action.rollback_data,
+          executed_at: action.executed_at ?? action.created_at,
+        })),
+      })),
+  agents:     () =>
+    defenseApiClient
+      .get<{ agents?: Array<Partial<CollectorAgent>> }>('/agents')
+      .then((r) => ({
+        ...r,
+        data: (r.data.agents ?? []).map((agent) => ({
+          id: agent.id ?? '',
+          name: agent.name ?? agent.hostname ?? 'unknown',
+          hostname: agent.hostname ?? '',
+          domain: agent.domain ?? '',
+          ip_address: agent.ip_address ?? '',
+          port: agent.port,
+          status: (agent.status as CollectorAgent['status']) ?? 'offline',
+          last_seen: agent.last_seen ?? new Date().toISOString(),
+          version: agent.version ?? '',
+          capabilities: agent.capabilities ?? [],
+          defense_mode: agent.defense_mode,
+          defense_url: agent.defense_url,
+        })),
+      })),
+  heartbeat:  (agentId: string, defenseUrl: string) =>
+    defenseApiClient.post('/agent/heartbeat', { agent_id: agentId, defense_url: defenseUrl }),
+  plan:       (incident: DefenseIncident) => defenseApiClient.post('/plan', incident),
+}
+
+// ============================================================
+// Policy Engine (policy-engine:8097)
+// ============================================================
+export const policyApi = {
+  get:            () => policyApiClient.get<DefensePolicySummary>('/policy'),
+  listExclusions: () => policyApiClient.get('/policy/exclusion'),
+  addExclusion:   (data: { scope_type: string; scope_value: string; reason: string; expires_at?: string; created_by: string }) =>
+    policyApiClient.post('/policy/exclusion', data),
+  deleteExclusion: (id: string) => policyApiClient.delete(`/policy/exclusion/${id}`),
+  evaluate:       (data: { action_type: string; severity: string; confidence: string; target_value: string }) =>
+    policyApiClient.post('/policy/evaluate', data),
+}
+
+// ============================================================
+// Evidence Ledger (evidence-ledger:8096)
+// ============================================================
+export const evidenceApi = {
+  list:   () =>
+    evidenceApiClient
+      .get<{ bundles?: Array<Partial<EvidenceBundle>>; total?: number }>('/evidence')
+      .then((r) => ({
+        ...r,
+        data: {
+          items: (r.data.bundles ?? []).map((bundle) => ({
+            id: bundle.id ?? '',
+            incident_id: bundle.incident_id ?? '',
+            storage_key: bundle.storage_key ?? '',
+            sha256: bundle.sha256 ?? '',
+            content_type: bundle.content_type ?? 'application/json',
+            size_bytes: bundle.size_bytes ?? 0,
+            metadata: bundle.metadata ?? {},
+            created_at: bundle.created_at,
+          })),
+          total: r.data.total ?? (r.data.bundles?.length ?? 0),
+        },
+      })),
+  bundle: (payload: EvidenceBundleRequest) => evidenceApiClient.post<EvidenceBundle>('/evidence/bundle', payload),
 }
 
 // ============================================================

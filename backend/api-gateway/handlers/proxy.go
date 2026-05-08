@@ -179,6 +179,7 @@ func (h *AgentHandler) GetAgent(c *gin.Context)       { proxyGET(c, h.serviceURL
 func (h *AgentHandler) DeleteAgent(c *gin.Context)    { proxyDELETE(c, h.serviceURL, "/agents/"+c.Param("id"), h.logger) }
 func (h *AgentHandler) GetAgentStatus(c *gin.Context) { proxyGET(c, h.serviceURL, "/agents/"+c.Param("id")+"/status", h.logger) }
 func (h *AgentHandler) InstallAgent(c *gin.Context)      { proxyPOST(c, h.serviceURL, "/agents/install", h.logger) }
+func (h *AgentHandler) InstallBulkDCs(c *gin.Context)    { proxyPOST(c, h.serviceURL, "/agents/install/bulk-dcs", h.logger) }
 func (h *AgentHandler) ListInstallJobs(c *gin.Context)   { proxyGET(c, h.serviceURL, "/agents/install", h.logger) }
 func (h *AgentHandler) GetInstallStatus(c *gin.Context)  { proxyGET(c, h.serviceURL, "/agents/install/"+c.Param("jobId"), h.logger) }
 
@@ -202,6 +203,8 @@ func (h *InventoryHandler) GetTrusts(c *gin.Context)           { proxyGET(c, h.s
 func (h *InventoryHandler) GetTopology(c *gin.Context)         { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/topology", h.logger) }
 func (h *InventoryHandler) GetCertTemplates(c *gin.Context)    { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/cert-templates", h.logger) }
 func (h *InventoryHandler) GetCertAuthorities(c *gin.Context)  { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/cert-authorities", h.logger) }
+func (h *InventoryHandler) GetServiceIdentities(c *gin.Context){ proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/service-identities", h.logger) }
+func (h *InventoryHandler) GetVulnerabilities(c *gin.Context)  { proxyGET(c, h.serviceURL, "/snapshots/"+c.Param("id")+"/vulnerabilities", h.logger) }
 
 // FindingsHandler proxies to analysis-engine
 type FindingsHandler struct {

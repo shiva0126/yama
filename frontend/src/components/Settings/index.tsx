@@ -103,7 +103,7 @@ export function Settings() {
 
       {/* ── Map style ─────────────────────────────────── */}
       <div className="card" style={{ padding: '20px 24px' }}>
-        <SectionHead title="Topology map background" sub="Controls the AD network topology map on the Overview page" />
+        <SectionHead title="Topology map background" sub="Controls the AD network topology map on Overview and Topology pages" />
         <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
           {(['dark', 'light'] as MapStyle[]).map(style => (
             <ThemeOption

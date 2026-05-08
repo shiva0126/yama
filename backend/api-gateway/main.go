@@ -91,6 +91,7 @@ func main() {
 				agents.DELETE("/:id", agentHandler.DeleteAgent)
 				agents.GET("/:id/status", agentHandler.GetAgentStatus)
 				agents.POST("/install", agentHandler.InstallAgent)
+				agents.POST("/install/bulk-dcs", agentHandler.InstallBulkDCs)
 				agents.GET("/install", agentHandler.ListInstallJobs)
 				agents.GET("/install/:jobId", agentHandler.GetInstallStatus)
 			}
@@ -122,6 +123,8 @@ func main() {
 				inventory.GET("/snapshots/:id/topology", inventoryHandler.GetTopology)
 				inventory.GET("/snapshots/:id/cert-templates", inventoryHandler.GetCertTemplates)
 				inventory.GET("/snapshots/:id/cert-authorities", inventoryHandler.GetCertAuthorities)
+				inventory.GET("/snapshots/:id/service-identities", inventoryHandler.GetServiceIdentities)
+				inventory.GET("/snapshots/:id/vulnerabilities", inventoryHandler.GetVulnerabilities)
 			}
 
 			// Findings

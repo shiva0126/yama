@@ -16,7 +16,7 @@ const DEFAULTS: ThemeConfig = {
   contentMode:  'light',
   sidebarStyle: 'dark',
   accentColor:  'blue',
-  mapStyle:     'dark',
+  mapStyle:     'light',
 }
 
 /* ── Accent palettes ───────────────────────────────────── */

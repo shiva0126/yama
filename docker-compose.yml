@@ -326,6 +326,8 @@ services:
       AGENT_PORT: 9090
       DEFENSE_MODE: "true"
       SIGNAL_COLLECTOR_URL: http://signal-collector:8091
+      DEFENSE_API_URL: http://defense-api:8098
+      DEFENSE_URL: http://collector-agent:9090
       AGENT_ID: local-linux-agent
     volumes:
       - ./collector/powershell:/app/powershell

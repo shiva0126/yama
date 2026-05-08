@@ -118,6 +118,10 @@ func (c *Collector) Collect(taskType string) (map[string]interface{}, error) {
 		return c.CollectADCS()
 	case "sites":
 		return c.CollectSites()
+	case "service-identities":
+		return c.CollectServiceIdentities()
+	case "ad-vuln-scan":
+		return c.CollectADVulnerabilityScan()
 	default:
 		return map[string]interface{}{}, nil
 	}

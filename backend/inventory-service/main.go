@@ -91,6 +91,11 @@ func main() {
 		snapshot := buildFullSnapshot(pool, id, logger)
 		c.JSON(http.StatusOK, snapshot)
 	})
+	r.GET("/snapshots/:id", func(c *gin.Context) {
+		id := c.Param("id")
+		snapshot := buildFullSnapshot(pool, id, logger)
+		c.JSON(http.StatusOK, snapshot)
+	})
 
 	r.GET("/snapshots/:id/users", func(c *gin.Context) {
 		queryInventory(c, pool, "ad_users", c.Param("id"))
@@ -119,6 +124,12 @@ func main() {
 	})
 	r.GET("/snapshots/:id/cert-authorities", func(c *gin.Context) {
 		querySnapshotMeta(c, pool, "cert_authorities", c.Param("id"))
+	})
+	r.GET("/snapshots/:id/service-identities", func(c *gin.Context) {
+		querySnapshotMeta(c, pool, "service_identities", c.Param("id"))
+	})
+	r.GET("/snapshots/:id/vulnerabilities", func(c *gin.Context) {
+		querySnapshotMeta(c, pool, "vulnerabilities", c.Param("id"))
 	})
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
@@ -276,6 +287,30 @@ func storeTaskData(pool *pgxpool.Pool, snapshotID, scanID, taskType string, data
 			 ON CONFLICT (snapshot_id, key) DO UPDATE SET value = EXCLUDED.value`,
 			snapshotID, maqJSON,
 		)
+
+	case "service-identities":
+		serviceJSON, _ := json.Marshal(data)
+		pool.Exec(ctx,
+			`INSERT INTO snapshot_metadata (snapshot_id, key, value)
+			 VALUES ($1, 'service_identities', $2)
+			 ON CONFLICT (snapshot_id, key) DO UPDATE SET value = EXCLUDED.value`,
+			snapshotID, serviceJSON,
+		)
+		if identities, ok := data["service_identities"].([]interface{}); ok {
+			count += len(identities)
+		}
+
+	case "ad-vuln-scan":
+		vulnJSON, _ := json.Marshal(data)
+		pool.Exec(ctx,
+			`INSERT INTO snapshot_metadata (snapshot_id, key, value)
+			 VALUES ($1, 'vulnerabilities', $2)
+			 ON CONFLICT (snapshot_id, key) DO UPDATE SET value = EXCLUDED.value`,
+			snapshotID, vulnJSON,
+		)
+		if vulnerabilities, ok := data["vulnerabilities"].([]interface{}); ok {
+			count += len(vulnerabilities)
+		}
 	}
 
 	return count
@@ -294,6 +329,8 @@ func buildFullSnapshot(pool *pgxpool.Pool, snapshotID string, logger *zap.Logger
 		"acls":               []interface{}{},
 		"cert_templates":     []interface{}{},
 		"cert_authorities":   []interface{}{},
+		"service_identities": []interface{}{},
+		"vulnerabilities":    []interface{}{},
 		"machine_account_quota": 0,
 		"recycle_bin_enabled":   false,
 	}
@@ -336,6 +373,23 @@ func buildFullSnapshot(pool *pgxpool.Pool, snapshotID string, logger *zap.Logger
 	if domainCfg != nil {
 		snapshot["machine_account_quota"] = extractIntKey(domainCfg, "machine_account_quota")
 		snapshot["recycle_bin_enabled"] = extractBoolKey(domainCfg, "recycle_bin_enabled")
+	}
+
+	// Service identities and vulnerability scan metadata
+	var serviceIdentities map[string]interface{}
+	loadMeta(ctx, pool, snapshotID, "service_identities", &serviceIdentities)
+	if serviceIdentities != nil {
+		if v, ok := serviceIdentities["service_identities"]; ok {
+			snapshot["service_identities"] = v
+		}
+	}
+
+	var vulnerabilities map[string]interface{}
+	loadMeta(ctx, pool, snapshotID, "vulnerabilities", &vulnerabilities)
+	if vulnerabilities != nil {
+		if v, ok := vulnerabilities["vulnerabilities"]; ok {
+			snapshot["vulnerabilities"] = v
+		}
 	}
 
 	return snapshot
@@ -381,10 +435,12 @@ func buildTopologyResponse(c *gin.Context, pool *pgxpool.Pool, snapshotID string
 	dcRows.Close()
 
 	// Trusts (stored in topology metadata or domain info)
-	var sitesData, adcsData, domainCfg map[string]interface{}
+	var sitesData, adcsData, domainCfg, serviceData, vulnData map[string]interface{}
 	loadMeta(ctx, pool, snapshotID, "sites", &sitesData)
 	loadMeta(ctx, pool, snapshotID, "adcs", &adcsData)
 	loadMeta(ctx, pool, snapshotID, "domain_config", &domainCfg)
+	loadMeta(ctx, pool, snapshotID, "service_identities", &serviceData)
+	loadMeta(ctx, pool, snapshotID, "vulnerabilities", &vulnData)
 
 	// Snapshot base info
 	var domain string
@@ -413,6 +469,8 @@ func buildTopologyResponse(c *gin.Context, pool *pgxpool.Pool, snapshotID string
 		"site_links":         extractKey(sitesData, "site_links"),
 		"cert_templates":     extractKey(adcsData, "cert_templates"),
 		"cert_authorities":   extractKey(adcsData, "cert_authorities"),
+		"service_identities": extractKey(serviceData, "service_identities"),
+		"vulnerabilities":    extractKey(vulnData, "vulnerabilities"),
 		"machine_account_quota": extractIntKey(domainCfg, "machine_account_quota"),
 		"recycle_bin_enabled":   extractBoolKey(domainCfg, "recycle_bin_enabled"),
 	}

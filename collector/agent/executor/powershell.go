@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -95,6 +96,64 @@ func (e *Executor) RunPowerShell(scriptName, domain string, extraArgs ...string)
 	// Check for script-level error
 	if errVal, ok := result["error"]; ok && errVal != nil {
 		return result, fmt.Errorf("script reported error: %v", errVal)
+	}
+
+	return result, nil
+}
+
+// ExecuteDefenseAction executes a defensive response action on the local host.
+func (e *Executor) ExecuteDefenseAction(command, target string) (map[string]interface{}, error) {
+	switch command {
+	case "disable-account":
+		return e.disableAccount(target)
+	default:
+		return nil, fmt.Errorf("unsupported defense command: %s", command)
+	}
+}
+
+func (e *Executor) disableAccount(target string) (map[string]interface{}, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+
+	psExe, err := psExecutable()
+	if err != nil {
+		// In non-AD demo environments (for example Linux dev containers), accept the
+		// action so the pipeline remains testable even when host-side execution is unavailable.
+		return map[string]interface{}{
+			"status":  "accepted-no-executor",
+			"command": "disable-account",
+			"target":  target,
+			"note":    err.Error(),
+		}, nil
+	}
+
+	escapedTarget := strings.ReplaceAll(target, "'", "''")
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'; Disable-ADAccount -Identity '%s' -Confirm:$false; @{status='ok'; command='disable-account'; target='%s'} | ConvertTo-Json -Compress`,
+		escapedTarget, escapedTarget,
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psExe, "-NonInteractive", "-NoProfile", "-Command", psScript)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("disable-account failed: %w; stderr: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return map[string]interface{}{
+			"status":  "ok",
+			"command": "disable-account",
+			"target":  target,
+			"output":  strings.TrimSpace(stdout.String()),
+		}, nil
 	}
 
 	return result, nil

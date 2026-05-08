@@ -11,9 +11,67 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { AlertTriangle, Network, Server, Shield, Users } from 'lucide-react'
-import { inventoryApi, scansApi } from '../../api'
+import { agentsApi, inventoryApi, scansApi } from '../../api'
+import { useTheme } from '../../contexts/ThemeContext'
+import type { CollectorAgent } from '../../types'
+
+type NodeHeartbeat = 'online' | 'offline' | 'unmanaged'
+
+function normalizeHost(value?: string) {
+  if (!value) return ''
+  return value.toLowerCase().trim().replace(/\.$/, '')
+}
+
+function hostAliases(value?: string): string[] {
+  const normalized = normalizeHost(value)
+  if (!normalized) return []
+  const short = normalized.split('.')[0]
+  return short && short !== normalized ? [normalized, short] : [normalized]
+}
+
+function buildAgentHeartbeatIndex(agents: CollectorAgent[]) {
+  const index = new Map<string, NodeHeartbeat>()
+  const setStatus = (key: string, status: NodeHeartbeat) => {
+    if (!key || status === 'unmanaged') return
+    const current = index.get(key)
+    if (!current || (current === 'offline' && status === 'online')) {
+      index.set(key, status)
+    }
+  }
+
+  agents.forEach((agent) => {
+    const status: NodeHeartbeat = agent.status === 'online' ? 'online' : 'offline'
+    ;[...hostAliases(agent.hostname), ...hostAliases(agent.name), ...hostAliases(agent.ip_address)].forEach((key) => {
+      setStatus(key, status)
+    })
+  })
+
+  return index
+}
+
+function resolveDCHeartbeat(dc: any, agentIndex: Map<string, NodeHeartbeat>): NodeHeartbeat {
+  const dcNode = normalizeDCRecord(dc)
+  const keys = [...hostAliases(dcNode?.name), ...hostAliases(dcNode?.host_name), ...hostAliases(dcNode?.ip_address)]
+  for (const key of keys) {
+    const status = agentIndex.get(key)
+    if (status) return status
+  }
+  return 'unmanaged'
+}
+
+function normalizeDCRecord(dc: any): { name?: string; host_name?: string; ip_address?: string; operating_system?: string; is_global_catalog?: boolean } {
+  if (typeof dc === 'string') {
+    return { name: dc, host_name: dc }
+  }
+  if (!dc || typeof dc !== 'object') {
+    return {}
+  }
+  return dc
+}
 
 export function Topology() {
+  const { theme, setTheme } = useTheme()
+  const isDarkMap = theme.mapStyle === 'dark'
   const { data: scansData } = useQuery({
     queryKey: ['scans'],
     queryFn: () => scansApi.list().then((r) => r.data),
@@ -28,16 +86,21 @@ export function Topology() {
     queryFn: () => (snapshotId ? inventoryApi.getTopology(snapshotId).then((r) => r.data) : null),
     enabled: !!snapshotId,
   })
+  const { data: agentsData } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => agentsApi.list().then((r) => r.data),
+    refetchInterval: 10_000,
+  })
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
   useEffect(() => {
     if (!topologyData) return
-    const graph = buildGraph(topologyData)
+    const graph = buildGraph(topologyData, agentsData?.agents ?? [], theme.mapStyle)
     setNodes(graph.nodes)
     setEdges(graph.edges)
-  }, [setEdges, setNodes, topologyData])
+  }, [agentsData?.agents, setEdges, setNodes, theme.mapStyle, topologyData])
 
   const summary = topologyData?.summary
   const topologyLoading = topologyData === undefined && !!snapshotId
@@ -54,6 +117,19 @@ export function Topology() {
       template.vulnerable_esc6 ||
       template.vulnerable_esc7
   ).length
+  const dcHeartbeat = (() => {
+    const index = buildAgentHeartbeatIndex(agentsData?.agents ?? [])
+    const result = { online: 0, offline: 0, unmanaged: 0, total: 0 }
+    ;(topologyData?.domain_controllers ?? []).forEach((dc: any) => {
+      const dcNode = normalizeDCRecord(dc)
+      result.total++
+      const status = resolveDCHeartbeat(dcNode, index)
+      if (status === 'online') result.online++
+      else if (status === 'offline') result.offline++
+      else result.unmanaged++
+    })
+    return result
+  })()
 
   return (
     <div className="space-y-6">
@@ -87,12 +163,50 @@ export function Topology() {
           tone={scansLoading ? 'neutral' : vulnerableTemplates > 0 ? 'danger' : 'neutral'}
         />
         <RiskBadge label={scansLoading ? 'Sites mapped: loading' : `Sites mapped: ${sites.length}`} tone="neutral" />
+        <RiskBadge
+          label={scansLoading ? 'DC heartbeat: loading' : `DC heartbeat online: ${dcHeartbeat.online}/${dcHeartbeat.total}`}
+          tone={scansLoading ? 'neutral' : dcHeartbeat.total > 0 && dcHeartbeat.online < dcHeartbeat.total ? 'warning' : 'success'}
+        />
       </section>
 
       <section className="panel overflow-hidden">
         <div className="border-b border-white/8 px-6 py-4">
-          <p className="label">Directory graph</p>
-          <h3 className="mt-1 text-lg font-semibold text-white">Forest and controller map</h3>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="label">Directory graph</p>
+              <h3 className="mt-1 text-lg font-semibold text-white">Forest and controller map</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTheme({ mapStyle: 'light' })}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  isDarkMap
+                    ? 'border-slate-200/15 bg-white/[0.03] text-slate-300'
+                    : 'border-sky-300/50 bg-sky-400/15 text-sky-100'
+                }`}
+              >
+                light
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme({ mapStyle: 'dark' })}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+                  isDarkMap
+                    ? 'border-sky-300/50 bg-sky-400/15 text-sky-100'
+                    : 'border-slate-200/15 bg-white/[0.03] text-slate-300'
+                }`}
+              >
+                dark
+              </button>
+              <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-200">
+                {dcHeartbeat.online} online
+              </span>
+              <span className="rounded-full border border-rose-300/30 bg-rose-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-rose-200">
+                {dcHeartbeat.offline} offline
+              </span>
+            </div>
+          </div>
         </div>
         <div className="h-[620px]">
           {scansLoading ? (
@@ -106,12 +220,12 @@ export function Topology() {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               fitView
-              className="bg-[#06101d]"
+              className={isDarkMap ? 'reactflow-dark' : 'reactflow-light'}
             >
-              <Background color="rgba(124, 154, 190, 0.12)" gap={24} />
-              <Controls className="!border-white/8 !bg-[#0b1628]" />
+              <Background color={isDarkMap ? 'rgba(124, 154, 190, 0.12)' : 'rgba(100,116,139,0.15)'} gap={24} />
+              <Controls />
               <MiniMap
-                className="!bg-[#0b1628]"
+                className={isDarkMap ? '!bg-[#0b1628]' : '!bg-white'}
                 nodeColor={(node) => (typeof node.style?.background === 'string' ? node.style.background : '#1b2b40')}
               />
             </ReactFlow>
@@ -151,9 +265,56 @@ export function Topology() {
   )
 }
 
-function buildGraph(data: any): { nodes: Node[]; edges: Edge[] } {
+function buildGraph(data: any, agents: CollectorAgent[], mapStyle: 'dark' | 'light'): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = []
   const edges: Edge[] = []
+  const dark = mapStyle === 'dark'
+  const agentIndex = buildAgentHeartbeatIndex(agents)
+  const colors = dark
+    ? {
+        domainBg: 'rgba(36, 82, 146, 0.62)',
+        domainBorder: 'rgba(78, 161, 255, 0.28)',
+        domainText: '#f8fbff',
+        siteBg: 'rgba(20, 34, 55, 0.92)',
+        siteBorder: 'rgba(124, 154, 190, 0.18)',
+        siteText: '#dbe7f7',
+        siteEdge: 'rgba(124, 154, 190, 0.4)',
+        dcBg: 'rgba(18, 31, 49, 0.94)',
+        dcGcBg: 'rgba(18, 61, 57, 0.9)',
+        dcBorder: 'rgba(78, 161, 255, 0.18)',
+        dcGcBorder: 'rgba(115, 224, 192, 0.28)',
+        dcText: '#ecf3ff',
+        siteLink: 'rgba(244, 201, 107, 0.72)',
+        siteLinkText: '#d8b56b',
+        dcOnlineBg: 'rgba(22,163,74,0.15)',
+        dcOnlineBorder: 'rgba(22,163,74,0.48)',
+        dcOnlineText: '#86efac',
+        dcOfflineBg: 'rgba(220,38,38,0.15)',
+        dcOfflineBorder: 'rgba(220,38,38,0.44)',
+        dcOfflineText: '#fca5a5',
+      }
+    : {
+        domainBg: '#dbeafe',
+        domainBorder: '#93c5fd',
+        domainText: '#0f172a',
+        siteBg: '#f8fafc',
+        siteBorder: '#cbd5e1',
+        siteText: '#334155',
+        siteEdge: '#cbd5e1',
+        dcBg: '#ffffff',
+        dcGcBg: '#dcfce7',
+        dcBorder: '#d1d9e6',
+        dcGcBorder: '#86efac',
+        dcText: '#0f172a',
+        siteLink: '#f59e0b',
+        siteLinkText: '#b45309',
+        dcOnlineBg: '#dcfce7',
+        dcOnlineBorder: '#86efac',
+        dcOnlineText: '#166534',
+        dcOfflineBg: '#fee2e2',
+        dcOfflineBorder: '#fca5a5',
+        dcOfflineText: '#b91c1c',
+      }
 
   const domain = data.domain
   const sites: any[] = data.sites ?? []
@@ -170,9 +331,9 @@ function buildGraph(data: any): { nodes: Node[]; edges: Edge[] } {
       minWidth: 220,
       padding: '14px 18px',
       borderRadius: '18px',
-      color: '#f8fbff',
-      border: '1px solid rgba(78, 161, 255, 0.28)',
-      background: 'rgba(36, 82, 146, 0.62)',
+      color: colors.domainText,
+      border: `1px solid ${colors.domainBorder}`,
+      background: colors.domainBg,
       textAlign: 'center',
       fontWeight: 700,
       fontSize: '13px',
@@ -192,9 +353,9 @@ function buildGraph(data: any): { nodes: Node[]; edges: Edge[] } {
         minWidth: 180,
         padding: '12px 14px',
         borderRadius: '16px',
-        color: '#dbe7f7',
-        border: '1px solid rgba(124, 154, 190, 0.18)',
-        background: 'rgba(20, 34, 55, 0.92)',
+        color: colors.siteText,
+        border: `1px solid ${colors.siteBorder}`,
+        background: colors.siteBg,
         fontSize: '11px',
         lineHeight: 1.4,
         textAlign: 'center',
@@ -204,38 +365,64 @@ function buildGraph(data: any): { nodes: Node[]; edges: Edge[] } {
       id: `domain-site-${site.name}`,
       source: 'domain',
       target: `site:${site.name}`,
-      style: { stroke: 'rgba(124, 154, 190, 0.4)', strokeDasharray: '6 3' },
+      style: { stroke: colors.siteEdge, strokeDasharray: '6 3' },
     })
   })
 
   dcs.forEach((dc: any, index: number) => {
-    const site = sites.find((entry: any) => (entry.dcs ?? []).includes(dc.name))
+    const dcNode = normalizeDCRecord(dc)
+    const site = sites.find((entry: any) => (entry.dcs ?? []).includes(dcNode.name))
     const parent = site ? `site:${site.name}` : 'domain'
     const position = sitePositions.get(site?.name ?? '')
-    const x = position ? position.x - 32 + ((site.dcs ?? []).indexOf(dc.name) || 0) * 110 : 180 + index * 130
+    const x = position ? position.x - 32 + ((site.dcs ?? []).indexOf(dcNode.name) || 0) * 110 : 180 + index * 130
     const y = position ? 370 : 190
+    const heartbeat = resolveDCHeartbeat(dcNode, agentIndex)
+    const label = heartbeat === 'unmanaged'
+      ? `${dcNode.name ?? 'DC'}\n${dcNode.operating_system ?? 'Domain Controller'}`
+      : `${dcNode.name ?? 'DC'} (${heartbeat})\n${dcNode.operating_system ?? 'Domain Controller'}`
     nodes.push({
-      id: `dc:${dc.name}`,
+      id: `dc:${dcNode.name ?? index}`,
       position: { x, y },
-      data: { label: `${dc.name}\n${dc.operating_system ?? 'Domain Controller'}` },
+      data: { label },
       style: {
         minWidth: 150,
         padding: '10px 12px',
         borderRadius: '14px',
-        color: '#ecf3ff',
-        border: `1px solid ${dc.is_global_catalog ? 'rgba(115, 224, 192, 0.28)' : 'rgba(78, 161, 255, 0.18)'}`,
-        background: dc.is_global_catalog ? 'rgba(18, 61, 57, 0.9)' : 'rgba(18, 31, 49, 0.94)',
+        color: heartbeat === 'online'
+          ? colors.dcOnlineText
+          : heartbeat === 'offline'
+            ? colors.dcOfflineText
+            : colors.dcText,
+        border: `1px solid ${
+          heartbeat === 'online'
+            ? colors.dcOnlineBorder
+            : heartbeat === 'offline'
+              ? colors.dcOfflineBorder
+              : (dcNode.is_global_catalog ? colors.dcGcBorder : colors.dcBorder)
+        }`,
+        background: heartbeat === 'online'
+          ? colors.dcOnlineBg
+          : heartbeat === 'offline'
+            ? colors.dcOfflineBg
+            : (dcNode.is_global_catalog ? colors.dcGcBg : colors.dcBg),
         fontSize: '10px',
         lineHeight: 1.5,
         textAlign: 'center',
+        boxShadow: heartbeat === 'online'
+          ? (dark ? '0 0 0 3px rgba(22,163,74,0.18)' : '0 0 0 3px rgba(22,163,74,0.1)')
+          : 'none',
       },
     })
     edges.push({
-      id: `${parent}-${dc.name}`,
+      id: `${parent}-${dcNode.name ?? index}`,
       source: parent,
-      target: `dc:${dc.name}`,
+      target: `dc:${dcNode.name ?? index}`,
       style: {
-        stroke: dc.is_global_catalog ? 'rgba(115, 224, 192, 0.55)' : 'rgba(78, 161, 255, 0.5)',
+        stroke: heartbeat === 'online'
+          ? colors.dcOnlineBorder
+          : heartbeat === 'offline'
+            ? colors.dcOfflineBorder
+            : (dcNode.is_global_catalog ? colors.dcGcBorder : colors.dcBorder),
         strokeWidth: 1.6,
       },
     })
@@ -249,8 +436,8 @@ function buildGraph(data: any): { nodes: Node[]; edges: Edge[] } {
         source: `site:${linkedSites[i]}`,
         target: `site:${linkedSites[i + 1]}`,
         label: `${link.name} · cost ${link.cost ?? '?'}`,
-        style: { stroke: 'rgba(244, 201, 107, 0.72)', strokeDasharray: '5 3' },
-        labelStyle: { fill: '#d8b56b', fontSize: 9 },
+        style: { stroke: colors.siteLink, strokeDasharray: '5 3' },
+        labelStyle: { fill: colors.siteLinkText, fontSize: 9 },
       })
     }
   })

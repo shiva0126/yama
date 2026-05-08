@@ -80,10 +80,13 @@ export interface CollectorAgent {
   hostname: string
   domain: string
   ip_address: string
+  port?: number
   status: 'online' | 'offline' | 'busy'
   last_seen: string
   version: string
   capabilities: string[]
+  defense_mode?: boolean
+  defense_url?: string
 }
 
 // ============================================================
@@ -314,6 +317,20 @@ export interface EvidenceBundle {
   content_type: string
   size_bytes: number
   metadata: Record<string, string>
+  created_at?: string
+}
+
+export interface ResponseAction {
+  id: string
+  incident_id: string
+  action_type: string
+  mode: string
+  status: string
+  target_type: string
+  target_value: string
+  result_summary: string
+  rollback_data?: string
+  executed_at?: string
 }
 
 // ============================================================
@@ -332,6 +349,33 @@ export interface InstallRequest {
   agent_port?: number
 }
 
+export interface BulkDCInstallRequest {
+  snapshot_id: string
+  username: string
+  password: string
+  domain: string
+  agent_name_prefix?: string
+  ssh_port?: number
+  agent_port?: number
+}
+
+export interface BulkDCInstallResponse {
+  snapshot_id: string
+  queued_count: number
+  dc_count: number
+  queued: Array<{
+    job_id: string
+    dc: string
+    host: string
+    target_ip: string
+    agent_name: string
+  }>
+  skipped: Array<{
+    dc: string
+    reason: string
+  }>
+}
+
 export interface InstallJob {
   id: string
   target_ip: string
@@ -342,6 +386,30 @@ export interface InstallJob {
   agent_id?: string
   error?: string
   created_at: string
+}
+
+// ============================================================
+// Assessment Extensions
+// ============================================================
+
+export interface ServiceIdentity {
+  sam_account_name: string
+  distinguished_name: string
+  service_principal_names: string[]
+  spn_count: number
+  enabled: boolean
+  is_privileged: boolean
+  privileged_groups: string[]
+  last_logon_timestamp?: string
+}
+
+export interface ADVulnerability {
+  id: string
+  title: string
+  severity: Severity
+  count: number
+  description: string
+  metadata?: Record<string, string | number | boolean>
 }
 
 // ============================================================

@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import { AlertTriangle, FileArchive, Flame, Shield, Zap } from 'lucide-react'
-import { defenseApi } from '../../api'
-import type { DefenseDetection, DefenseIncident, Severity } from '../../types'
+import { defenseApi, evidenceApi } from '../../api'
+import type { CollectorAgent, DefenseDetection, DefenseIncident, EvidenceBundle, ResponseAction, Severity } from '../../types'
 import { CategoryBars } from '../Charts'
 
 type Tab = 'active' | 'incidents' | 'catalog' | 'response' | 'evidence'
@@ -38,6 +38,21 @@ export function Defend() {
     queryFn: () => defenseApi.catalog().then(r => r.data),
     enabled: tab === 'catalog',
   })
+  const { data: responses } = useQuery({
+    queryKey: ['defense-responses'],
+    queryFn: () => defenseApi.responses().then(r => r.data),
+    refetchInterval: 15_000,
+  })
+  const { data: defenseAgents } = useQuery({
+    queryKey: ['defense-agents'],
+    queryFn: () => defenseApi.agents().then(r => r.data),
+    refetchInterval: 15_000,
+  })
+  const { data: evidence } = useQuery({
+    queryKey: ['defense-evidence'],
+    queryFn: () => evidenceApi.list().then(r => r.data),
+    refetchInterval: 20_000,
+  })
 
   const openIncidents = incidents?.filter(i => i.status === 'open') ?? []
 
@@ -45,8 +60,8 @@ export function Defend() {
     { id: 'active',    label: 'Active',    icon: <Zap size={13} />,           count: openIncidents.length },
     { id: 'incidents', label: 'Incidents', icon: <AlertTriangle size={13} />, count: incidents?.length },
     { id: 'catalog',   label: 'Catalog',   icon: <Flame size={13} />,         count: summary?.detector_count },
-    { id: 'response',  label: 'Response',  icon: <Shield size={13} /> },
-    { id: 'evidence',  label: 'Evidence',  icon: <FileArchive size={13} /> },
+    { id: 'response',  label: 'Response',  icon: <Shield size={13} />,        count: responses?.length },
+    { id: 'evidence',  label: 'Evidence',  icon: <FileArchive size={13} />,   count: evidence?.total },
   ]
 
   return (
@@ -89,8 +104,8 @@ export function Defend() {
         {tab === 'active'    && <ActiveTab    incidents={openIncidents} detections={detections ?? []} />}
         {tab === 'incidents' && <IncidentsTab incidents={incidents ?? []} />}
         {tab === 'catalog'   && <CatalogTab   catalog={catalog} summary={summary} />}
-        {tab === 'response'  && <ResponseTab  summary={summary} />}
-        {tab === 'evidence'  && <EvidenceTab  incidents={incidents ?? []} />}
+        {tab === 'response'  && <ResponseTab  summary={summary} responses={responses ?? []} agents={defenseAgents ?? []} />}
+        {tab === 'evidence'  && <EvidenceTab  bundles={evidence?.items ?? []} />}
       </div>
     </div>
   )
@@ -311,8 +326,9 @@ function CatalogTab({ catalog, summary }: { catalog: any; summary: any }) {
 }
 
 /* ─── Response tab ─────────────────────────────────────── */
-function ResponseTab({ summary }: { summary: any }) {
+function ResponseTab({ summary, responses, agents }: { summary: any; responses: ResponseAction[]; agents: CollectorAgent[] }) {
   const profiles = Object.entries(summary?.response_profiles ?? {})
+  const onlineAgents = agents.filter((agent) => agent.status === 'online').length
   return (
     <div style={{ padding: '24px' }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>
@@ -338,36 +354,66 @@ function ResponseTab({ summary }: { summary: any }) {
           ))}
         </div>
       )}
+
+      <div style={{ fontSize: 10, fontWeight: 700, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '24px 0 10px' }}>
+        Action execution · {onlineAgents}/{agents.length} agents online
+      </div>
+      {responses.length === 0 ? (
+        <div style={{ color: '#8a9ab5', fontSize: 13 }}>No response actions planned yet</div>
+      ) : (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <table className="data-table">
+            <thead>
+              <tr><th>Action</th><th>Target</th><th>Mode</th><th>Status</th><th>Executed</th></tr>
+            </thead>
+            <tbody>
+              {responses.slice(0, 50).map(action => (
+                <tr key={action.id}>
+                  <td style={{ color: '#0f1923', fontWeight: 500 }}>{action.action_type}</td>
+                  <td style={{ color: '#4b5c72', fontFamily: 'monospace', fontSize: 11 }}>{action.target_value || '—'}</td>
+                  <td style={{ color: '#4b5c72', textTransform: 'capitalize' }}>{action.mode}</td>
+                  <td style={{ textTransform: 'capitalize' }}>
+                    <span className={`badge ${action.status === 'completed' ? 'badge-ok' : action.status === 'failed' ? 'badge-error' : action.status === 'executing' ? 'badge-info' : 'badge-neutral'}`}>
+                      {action.status}
+                    </span>
+                  </td>
+                  <td style={{ color: '#8a9ab5', fontSize: 12 }}>
+                    {action.executed_at ? formatDistanceToNow(new Date(action.executed_at), { addSuffix: true }) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
 
 /* ─── Evidence tab ─────────────────────────────────────── */
-function EvidenceTab({ incidents }: { incidents: DefenseIncident[] }) {
+function EvidenceTab({ bundles }: { bundles: EvidenceBundle[] }) {
   return (
     <div style={{ padding: '24px' }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 16 }}>
         Evidence bundles
       </div>
-      {incidents.length === 0 ? (
+      {bundles.length === 0 ? (
         <div style={{ color: '#8a9ab5', fontSize: 13 }}>No evidence collected yet</div>
       ) : (
         <div className="card" style={{ overflow: 'hidden' }}>
           <table className="data-table">
             <thead>
-              <tr><th>Incident</th><th>Severity</th><th>Detections</th><th>Opened</th><th></th></tr>
+              <tr><th>Incident</th><th>Storage key</th><th>Size</th><th>SHA256</th><th>Created</th></tr>
             </thead>
             <tbody>
-              {incidents.map(inc => (
-                <tr key={inc.id}>
-                  <td style={{ fontWeight: 500, color: '#0f1923' }}>{inc.title}</td>
-                  <td><span className={`sev sev-${inc.severity}`}>{inc.severity}</span></td>
-                  <td style={{ color: '#4b5c72' }}>{inc.detection_ids?.length ?? 0}</td>
+              {bundles.slice(0, 100).map(bundle => (
+                <tr key={bundle.id}>
+                  <td style={{ fontFamily: 'monospace', fontSize: 11, color: '#0f1923', fontWeight: 500 }}>{bundle.incident_id || '—'}</td>
+                  <td style={{ color: '#4b5c72', fontFamily: 'monospace', fontSize: 11 }}>{bundle.storage_key}</td>
+                  <td style={{ color: '#4b5c72' }}>{bundle.size_bytes} B</td>
+                  <td style={{ color: '#8a9ab5', fontFamily: 'monospace', fontSize: 11 }}>{bundle.sha256.slice(0, 12)}…</td>
                   <td style={{ fontSize: 12, color: '#8a9ab5' }}>
-                    {formatDistanceToNow(new Date(inc.opened_at), { addSuffix: true })}
-                  </td>
-                  <td>
-                    <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }}>Bundle</button>
+                    {bundle.created_at ? formatDistanceToNow(new Date(bundle.created_at), { addSuffix: true }) : '—'}
                   </td>
                 </tr>
               ))}

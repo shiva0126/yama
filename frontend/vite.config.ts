@@ -6,8 +6,28 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
-      '/ws':  { target: 'ws://localhost:8080',  changeOrigin: true, ws: true },
+      '/api': { target: 'http://localhost:9080', changeOrigin: true },
+      '/ws':  { target: 'ws://localhost:9080',  changeOrigin: true, ws: true },
+      '/defense-api': {
+        target: 'http://localhost:8098',
+        changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^\/defense-api/, ''),
+      },
+      '/evidence-api': {
+        target: 'http://localhost:8096',
+        changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^\/evidence-api/, ''),
+      },
+      '/policy-api': {
+        target: 'http://localhost:8097',
+        changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^\/policy-api/, ''),
+      },
+      '/response-api': {
+        target: 'http://localhost:8095',
+        changeOrigin: true,
+        rewrite: (path: string) => path.replace(/^\/response-api/, ''),
+      },
     },
   },
   build: {

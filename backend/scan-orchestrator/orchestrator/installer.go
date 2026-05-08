@@ -49,6 +49,16 @@ type InstallRequest struct {
 	AgentPort int    `json:"agent_port"`
 }
 
+type BulkInstallDCsRequest struct {
+	SnapshotID      string `json:"snapshot_id" binding:"required"`
+	Username        string `json:"username" binding:"required"`
+	Password        string `json:"password" binding:"required"`
+	Domain          string `json:"domain" binding:"required"`
+	AgentNamePrefix string `json:"agent_name_prefix"`
+	SSHPort         int    `json:"ssh_port"`
+	AgentPort       int    `json:"agent_port"`
+}
+
 var installJobs sync.Map // jobID -> *InstallJob
 
 func (o *Orchestrator) InstallAgent(c *gin.Context) {
@@ -99,6 +109,102 @@ func (o *Orchestrator) ListInstallJobs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"jobs": jobs})
 }
 
+// InstallAgentsForDomainControllers queues installer jobs for all DCs in a snapshot.
+func (o *Orchestrator) InstallAgentsForDomainControllers(c *gin.Context) {
+	var req BulkInstallDCsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.SSHPort == 0 {
+		req.SSHPort = 22
+	}
+	if req.AgentPort == 0 {
+		req.AgentPort = 9090
+	}
+	if strings.TrimSpace(req.AgentNamePrefix) == "" {
+		req.AgentNamePrefix = "DC-Agent"
+	}
+
+	dcs, err := o.fetchSnapshotDCs(req.SnapshotID)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	if len(dcs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no domain controllers found in selected snapshot"})
+		return
+	}
+
+	queued := make([]map[string]string, 0, len(dcs))
+	skipped := make([]map[string]string, 0)
+	for i, dc := range dcs {
+		targetIP := strings.TrimSpace(dc.IP)
+		if targetIP == "" {
+			resolvedIP, resolveErr := resolveToIPv4(dc.Host)
+			if resolveErr != nil || resolvedIP == "" {
+				skipped = append(skipped, map[string]string{
+					"dc":     dc.Name,
+					"reason": "unable to resolve host to IPv4",
+				})
+				continue
+			}
+			targetIP = resolvedIP
+		}
+
+		var exists int
+		_ = o.db.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM agents WHERE ip_address=$1`, targetIP,
+		).Scan(&exists)
+		if exists > 0 {
+			skipped = append(skipped, map[string]string{
+				"dc":     dc.Name,
+				"reason": "agent already exists for this IP",
+			})
+			continue
+		}
+
+		agentName := fmt.Sprintf("%s-%02d", req.AgentNamePrefix, i+1)
+		installReq := InstallRequest{
+			TargetIP:  targetIP,
+			Username:  req.Username,
+			Password:  req.Password,
+			Domain:    req.Domain,
+			AgentName: agentName,
+			SSHPort:   req.SSHPort,
+			AgentPort: req.AgentPort,
+		}
+
+		job := &InstallJob{
+			ID:        uuid.New().String(),
+			TargetIP:  targetIP,
+			AgentName: agentName,
+			Status:    InstallPending,
+			Progress:  0,
+			Message:   "Bulk DC installation queued",
+			CreatedAt: time.Now(),
+		}
+		installJobs.Store(job.ID, job)
+		go o.runInstall(job, installReq)
+
+		queued = append(queued, map[string]string{
+			"job_id":      job.ID,
+			"dc":          dc.Name,
+			"host":        dc.Host,
+			"target_ip":   targetIP,
+			"agent_name":  agentName,
+		})
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"snapshot_id": req.SnapshotID,
+		"queued":      queued,
+		"skipped":     skipped,
+		"queued_count": len(queued),
+		"dc_count":    len(dcs),
+	})
+}
+
 // ServeAgentBinary serves the compiled Windows agent executable.
 func (o *Orchestrator) ServeAgentBinary(c *gin.Context) {
 	binaryPath := agentBinaryPath()
@@ -122,6 +228,78 @@ func agentBinaryPath() string {
 		}
 	}
 	return "./yama-agent.exe"
+}
+
+type snapshotDC struct {
+	Name string
+	Host string
+	IP   string
+}
+
+func (o *Orchestrator) fetchSnapshotDCs(snapshotID string) ([]snapshotDC, error) {
+	url := strings.TrimRight(o.cfg.InventoryServiceURL, "/") + "/snapshots/" + snapshotID + "/dcs"
+	resp, err := o.client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("fetch dcs from inventory-service: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("inventory-service returned status %d while loading dcs", resp.StatusCode)
+	}
+
+	var payload struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode dcs payload: %w", err)
+	}
+
+	dcs := make([]snapshotDC, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		name := str(item, "name")
+		host := str(item, "host_name")
+		ip := str(item, "ip_address")
+		if host == "" {
+			host = name
+		}
+		if host == "" && ip == "" {
+			continue
+		}
+		dcs = append(dcs, snapshotDC{Name: name, Host: host, IP: ip})
+	}
+	return dcs, nil
+}
+
+func resolveToIPv4(host string) (string, error) {
+	if net.ParseIP(host) != nil {
+		return host, nil
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return "", err
+	}
+	for _, ip := range ips {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String(), nil
+		}
+	}
+	if len(ips) > 0 {
+		return ips[0].String(), nil
+	}
+	return "", fmt.Errorf("no ip found")
+}
+
+func str(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }
 
 func (o *Orchestrator) runInstall(job *InstallJob, req InstallRequest) {
@@ -190,8 +368,11 @@ func (o *Orchestrator) runInstall(job *InstallJob, req InstallRequest) {
 
 	update(70, "Installing Windows service...", InstallRunning)
 
+	installAPIKey := generateAPIKey()
+	installAgentID := uuid.New().String()
 	installCmd := fmt.Sprintf(
-		`powershell -NonInteractive -Command "New-Service -Name 'YamaAgent' -BinaryPathName 'C:\yama\yama-agent.exe' -DisplayName 'Yama AD Collector Agent' -StartupType Automatic -Description 'Yama Active Directory Assessment Collector' -ErrorAction Stop"`,
+		`powershell -NonInteractive -Command "New-Service -Name 'YamaAgent' -BinaryPathName 'C:\yama\yama-agent.exe --port %d --api-key %s' -DisplayName 'Yama AD Collector Agent' -StartupType Automatic -Description 'Yama Active Directory Assessment Collector' -ErrorAction Stop"`,
+		req.AgentPort, installAPIKey,
 	)
 	if err := sshRun(client, installCmd); err != nil {
 		job.Error = fmt.Sprintf("Failed to install service: %v", err)
@@ -239,13 +420,11 @@ func (o *Orchestrator) runInstall(job *InstallJob, req InstallRequest) {
 		hostname = strings.TrimSuffix(names[0], ".")
 	}
 
-	apiKey := generateAPIKey()
-	agentID := uuid.New().String()
 	_, err = o.db.Exec(context.Background(),
 		`INSERT INTO agents (id, name, hostname, domain, ip_address, api_key, status, last_seen, version, capabilities)
 		 VALUES ($1, $2, $3, $4, $5, $6, 'online', NOW(), '1.0.0', $7)`,
-		agentID, req.AgentName, hostname, req.Domain, req.TargetIP, apiKey,
-		[]string{"topology", "users", "groups", "computers", "gpos", "kerberos", "acls", "dc-info"},
+		installAgentID, req.AgentName, hostname, req.Domain, req.TargetIP, installAPIKey,
+		[]string{"topology", "users", "groups", "computers", "gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp", "adcs", "sites", "defense:signal-forward", "defense:execute"},
 	)
 	if err != nil {
 		job.Error = fmt.Sprintf("Agent installed but DB registration failed: %v", err)
@@ -253,9 +432,9 @@ func (o *Orchestrator) runInstall(job *InstallJob, req InstallRequest) {
 		return
 	}
 
-	job.AgentID = agentID
+	job.AgentID = installAgentID
 	update(100, "Agent installed and registered successfully!", InstallCompleted)
-	o.logger.Info("agent installed via SSH", zap.String("agent_id", agentID), zap.String("target", req.TargetIP))
+	o.logger.Info("agent installed via SSH", zap.String("agent_id", installAgentID), zap.String("target", req.TargetIP))
 }
 
 // sshRun opens a new session on client and runs cmd.

@@ -4,12 +4,16 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +50,10 @@ func main() {
 
 	// API key auth middleware
 	r.Use(func(c *gin.Context) {
+		if c.Request.URL.Path == "/health" {
+			c.Next()
+			return
+		}
 		key := c.GetHeader("X-API-Key")
 		if key != *apiKey {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key"})
@@ -62,7 +70,7 @@ func main() {
 			"capabilities": []string{
 				"topology", "users", "groups", "computers",
 				"gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp",
-				"defense:signal-forward", "defense:status",
+				"defense:signal-forward", "defense:status", "defense:execute",
 			},
 			"defense_mode": os.Getenv("DEFENSE_MODE") == "true",
 			"platform":     runtime.GOOS,
@@ -98,6 +106,7 @@ func main() {
 		})
 
 		defend.POST("/signal", h.ForwardSignal)
+		defend.POST("/execute", h.DefendExecute)
 	}
 
 	srv := &http.Server{
@@ -117,9 +126,69 @@ func main() {
 		}
 	}()
 
+	go runDefenseHeartbeat(logger, *port)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	logger.Info("Agent shutting down")
+}
+
+func runDefenseHeartbeat(logger *zap.Logger, port string) {
+	if os.Getenv("DEFENSE_MODE") != "true" {
+		return
+	}
+
+	agentID := strings.TrimSpace(os.Getenv("AGENT_ID"))
+	if agentID == "" {
+		logger.Warn("DEFENSE_MODE=true but AGENT_ID is not set; heartbeat disabled")
+		return
+	}
+
+	defenseAPI := strings.TrimRight(strings.TrimSpace(os.Getenv("DEFENSE_API_URL")), "/")
+	if defenseAPI == "" {
+		defenseAPI = "http://defense-api:8098"
+	}
+
+	defenseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("DEFENSE_URL")), "/")
+	if defenseURL == "" {
+		defenseURL = "http://collector-agent:" + port
+	}
+
+	send := func() {
+		payload, _ := json.Marshal(map[string]string{
+			"agent_id":    agentID,
+			"defense_url": defenseURL,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, defenseAPI+"/agent/heartbeat", bytes.NewReader(payload))
+		if err != nil {
+			logger.Warn("heartbeat request build failed", zap.Error(err))
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			logger.Warn("heartbeat send failed", zap.Error(err))
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 300 {
+			logger.Warn("heartbeat rejected", zap.Int("status", resp.StatusCode))
+			return
+		}
+		logger.Debug("heartbeat sent", zap.String("agent_id", agentID), zap.String("defense_api", defenseAPI))
+	}
+
+	send()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		send()
+	}
 }

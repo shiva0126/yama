@@ -28,6 +28,8 @@ const (
 	TaskTypeFGPP      TaskType = "fgpp"
 	TaskTypeADCS      TaskType = "adcs"
 	TaskTypeSites     TaskType = "sites"
+	TaskTypeServiceIdentities TaskType = "service-identities"
+	TaskTypeADVulnScan        TaskType = "ad-vuln-scan"
 )
 
 var AllTaskTypes = []TaskType{
@@ -44,6 +46,8 @@ var AllTaskTypes = []TaskType{
 	TaskTypeFGPP,
 	TaskTypeADCS,
 	TaskTypeSites,
+	TaskTypeServiceIdentities,
+	TaskTypeADVulnScan,
 }
 
 type ScanJob struct {

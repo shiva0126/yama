@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format, formatDistanceToNow } from 'date-fns'
-import { Activity, ChevronRight, Loader2, Play, Search, StopCircle, X } from 'lucide-react'
-import { agentsApi, findingsApi, scansApi } from '../../api'
+import { Activity, ChevronRight, Loader2, Play, Radar, Search, Server, StopCircle, X } from 'lucide-react'
+import { agentsApi, findingsApi, inventoryApi, scansApi } from '../../api'
 import { useScanStore } from '../../stores/scanStore'
-import type { Finding, Severity, ScanJob } from '../../types'
+import type { ADVulnerability, Finding, Severity } from '../../types'
 import { ScoreGauge, SeverityDonut } from '../Charts'
 
 const TASKS = [
@@ -21,6 +21,8 @@ const TASKS = [
   { id: 'adcs',      label: 'ADCS / PKI',         group: 'Security' },
   { id: 'sites',     label: 'Sites & services',   group: 'Security' },
   { id: 'fgpp',      label: 'FGPP review',        group: 'Security' },
+  { id: 'service-identities', label: 'Service ID enumeration', group: 'Security' },
+  { id: 'ad-vuln-scan',       label: 'AD vulnerability scan',  group: 'Security' },
 ]
 
 const SEV_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info']
@@ -41,6 +43,7 @@ export function Assess() {
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {tab === 'scan' ? <ScanTab /> : <FindingsTab />}
       </div>
+
     </div>
   )
 }
@@ -54,6 +57,14 @@ function ScanTab() {
   const [fullScan, setFullScan] = useState(true)
   const [tasks, setTasks] = useState<string[]>([])
   const [activeScanId, setActiveScanId] = useState<string | null>(null)
+  const [showBulkDCInstall, setShowBulkDCInstall] = useState(false)
+  const [bulkCreds, setBulkCreds] = useState({
+    username: '',
+    password: '',
+    domain: '',
+    agent_name_prefix: 'DC-Agent',
+  })
+  const [bulkInstallSummary, setBulkInstallSummary] = useState<{ queued: number; total: number; skipped: number } | null>(null)
 
   const { data: agentsData } = useQuery({ queryKey: ['agents'], queryFn: () => agentsApi.list().then(r => r.data) })
   const { data: scansData } = useQuery({ queryKey: ['scans'], queryFn: () => scansApi.list().then(r => r.data), refetchInterval: 4000 })
@@ -61,7 +72,25 @@ function ScanTab() {
   const agents = agentsData?.agents ?? []
   const scans  = scansData?.scans ?? []
   const runningScan = scans.find(s => s.status === 'running')
+  const latestCompletedScan = scans.find(s => s.status === 'completed' && !!s.snapshot_id)
   const displayScan = activeScanId ? scans.find(s => s.id === activeScanId) : runningScan
+  const snapshotId = displayScan?.snapshot_id ?? latestCompletedScan?.snapshot_id
+
+  const { data: vulnerabilitiesData } = useQuery({
+    queryKey: ['assessment-vulnerabilities', snapshotId],
+    queryFn: () => inventoryApi.getVulnerabilities(snapshotId!).then(r => r.data),
+    enabled: !!snapshotId,
+    refetchInterval: 15_000,
+  })
+  const { data: serviceIdentitiesData } = useQuery({
+    queryKey: ['assessment-service-identities', snapshotId],
+    queryFn: () => inventoryApi.getServiceIdentities(snapshotId!).then(r => r.data),
+    enabled: !!snapshotId,
+    refetchInterval: 15_000,
+  })
+
+  const vulnerabilities = vulnerabilitiesData?.items ?? []
+  const serviceIdentities = serviceIdentitiesData?.items ?? []
 
   const createScan = useMutation({
     mutationFn: () => scansApi.create({ agent_id: agentId, domain, task_types: fullScan ? [] : tasks }),
@@ -75,8 +104,42 @@ function ScanTab() {
     mutationFn: (id: string) => scansApi.cancel(id),
     onSuccess: () => { setActiveScanId(null); qc.invalidateQueries({ queryKey: ['scans'] }) },
   })
+  const bulkInstallDCs = useMutation({
+    mutationFn: () => agentsApi.installBulkDCs({
+      snapshot_id: snapshotId!,
+      username: bulkCreds.username,
+      password: bulkCreds.password,
+      domain: bulkCreds.domain || domain || latestCompletedScan?.domain || '',
+      agent_name_prefix: bulkCreds.agent_name_prefix || 'DC-Agent',
+    }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['agents-install-jobs'] })
+      setBulkInstallSummary({
+        queued: res.data.queued_count,
+        total: res.data.dc_count,
+        skipped: res.data.skipped.length,
+      })
+      setShowBulkDCInstall(false)
+      setBulkCreds((prev) => ({ ...prev, password: '' }))
+    },
+  })
 
   const toggleTask = (id: string) => setTasks(p => p.includes(id) ? p.filter(t => t !== id) : [...p, id])
+
+  const vulnBySeverity = useMemo(() => {
+    const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 }
+    vulnerabilities.forEach((v) => {
+      const sev = (v.severity || 'info').toLowerCase()
+      counts[sev] = (counts[sev] ?? 0) + (v.count ?? 0)
+    })
+    return counts
+  }, [vulnerabilities])
+
+  const privilegedServiceAccounts = useMemo(
+    () => serviceIdentities.filter((identity) => identity.is_privileged).length,
+    [serviceIdentities],
+  )
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -112,7 +175,7 @@ function ScanTab() {
             <input type="checkbox" checked={fullScan} onChange={e => setFullScan(e.target.checked)} style={{ accentColor: '#2563eb', width: 14, height: 14 }} />
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: '#0f1923' }}>Full assessment</div>
-              <div style={{ fontSize: 11, color: '#8a9ab5' }}>All 13 collection tasks</div>
+              <div style={{ fontSize: 11, color: '#8a9ab5' }}>All {TASKS.length} collection tasks</div>
             </div>
           </label>
 
@@ -140,6 +203,30 @@ function ScanTab() {
           {createScan.isPending ? <Loader2 size={13} className="spin" /> : <Play size={13} />}
           {runningScan ? 'Scan running…' : 'Launch assessment'}
         </button>
+
+        <button
+          className="btn btn-ghost"
+          style={{ width: '100%', justifyContent: 'center', padding: '9px 0' }}
+          disabled={!snapshotId}
+          onClick={() => {
+            setBulkCreds((prev) => ({ ...prev, domain: domain || latestCompletedScan?.domain || prev.domain }))
+            setShowBulkDCInstall(true)
+          }}
+        >
+          <Server size={13} />
+          Install agents on mapped DCs
+        </button>
+        {!snapshotId && (
+          <div style={{ fontSize: 11, color: '#8a9ab5' }}>
+            Run one completed scan first, then bulk-install agents for all discovered DCs.
+          </div>
+        )}
+        {bulkInstallSummary && (
+          <div style={{ fontSize: 11, color: '#4b5c72', background: '#f8fafc', border: '1px solid #dbe2ea', borderRadius: 6, padding: '8px 10px' }}>
+            DC bulk install queued: {bulkInstallSummary.queued}/{bulkInstallSummary.total}
+            {bulkInstallSummary.skipped > 0 ? ` · skipped ${bulkInstallSummary.skipped}` : ''}
+          </div>
+        )}
       </div>
 
       {/* Right: progress + history */}
@@ -201,6 +288,89 @@ function ScanTab() {
           </div>
         )}
 
+        {/* AD vulnerability and service identity posture */}
+        <div className="section-label" style={{ marginBottom: 10 }}>AD vulnerability posture</div>
+        {!snapshotId ? (
+          <div style={{ color: '#8a9ab5', fontSize: 13, marginBottom: 20 }}>
+            Complete an assessment to populate vulnerability and service identity analysis.
+          </div>
+        ) : (
+          <div className="card" style={{ padding: 16, marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
+              <div style={{ border: '1px solid #fecaca', background: '#fef2f2', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#dc2626', lineHeight: 1 }}>{vulnBySeverity.critical}</div>
+                <div style={{ fontSize: 10, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>Critical</div>
+              </div>
+              <div style={{ border: '1px solid #fed7aa', background: '#fff7ed', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#ea580c', lineHeight: 1 }}>{vulnBySeverity.high}</div>
+                <div style={{ fontSize: 10, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>High</div>
+              </div>
+              <div style={{ border: '1px solid #fde68a', background: '#fffbeb', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#d97706', lineHeight: 1 }}>{vulnBySeverity.medium}</div>
+                <div style={{ fontSize: 10, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>Medium</div>
+              </div>
+              <div style={{ border: '1px solid #d1d9e6', background: '#f8fafc', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#0f1923', lineHeight: 1 }}>{serviceIdentities.length}</div>
+                <div style={{ fontSize: 10, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>Service IDs</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 14 }}>
+              <div style={{ border: '1px solid #e4e8ef', borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+                  Top vulnerability findings
+                </div>
+                {(vulnerabilities as ADVulnerability[]).length === 0 ? (
+                  <div style={{ fontSize: 12, color: '#8a9ab5' }}>No vulnerability telemetry yet</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {[...vulnerabilities]
+                      .sort((a, b) => {
+                        const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 }
+                        return ((rank[a.severity] ?? 5) - (rank[b.severity] ?? 5)) || (b.count - a.count)
+                      })
+                      .slice(0, 6)
+                      .map((v) => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className={`sev sev-${v.severity}`}>{v.severity}</span>
+                          <span style={{ fontSize: 12, color: '#0f1923', flex: 1 }}>{v.title}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#4b5c72' }}>{v.count}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ border: '1px solid #e4e8ef', borderRadius: 8, padding: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                  <Radar size={13} color="#2563eb" />
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Service identity risk
+                  </div>
+                </div>
+                <div style={{ marginBottom: 8, fontSize: 12, color: '#4b5c72' }}>
+                  Privileged service accounts
+                </div>
+                <div style={{ fontSize: 30, fontWeight: 800, color: privilegedServiceAccounts > 0 ? '#dc2626' : '#16a34a', lineHeight: 1 }}>
+                  {privilegedServiceAccounts}
+                </div>
+                <div style={{ height: 6, background: '#e4e8ef', borderRadius: 3, overflow: 'hidden', marginTop: 12 }}>
+                  <div
+                    style={{
+                      width: `${serviceIdentities.length > 0 ? (privilegedServiceAccounts / serviceIdentities.length) * 100 : 0}%`,
+                      height: '100%',
+                      background: privilegedServiceAccounts > 0 ? '#dc2626' : '#16a34a',
+                    }}
+                  />
+                </div>
+                <div style={{ marginTop: 8, fontSize: 11, color: '#8a9ab5' }}>
+                  {serviceIdentities.length} service identities enumerated
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Scan history */}
         <div className="section-label" style={{ marginBottom: 10 }}>Scan history</div>
         {scans.length === 0
@@ -239,6 +409,106 @@ function ScanTab() {
           </div>
         }
       </div>
+
+      {showBulkDCInstall && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,25,35,0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 60,
+            backdropFilter: 'blur(2px)',
+          }}
+          onClick={() => setShowBulkDCInstall(false)}
+        >
+          <div
+            style={{
+              width: 440,
+              borderRadius: 12,
+              background: '#ffffff',
+              border: '1px solid #e4e8ef',
+              padding: 22,
+              boxShadow: '0 20px 60px rgba(15,25,35,0.18)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#0f1923' }}>Install Agents On All DCs</div>
+                <div style={{ fontSize: 12, color: '#8a9ab5', marginTop: 4 }}>
+                  Snapshot: {snapshotId} · Targeting mapped domain controllers
+                </div>
+              </div>
+              <button className="btn-icon" onClick={() => setShowBulkDCInstall(false)}>
+                <X size={14} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', marginBottom: 6, display: 'block' }}>Domain admin username</label>
+                <input
+                  className="field"
+                  value={bulkCreds.username}
+                  onChange={(e) => setBulkCreds((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="Administrator"
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', marginBottom: 6, display: 'block' }}>Password</label>
+                <input
+                  type="password"
+                  className="field"
+                  value={bulkCreds.password}
+                  onChange={(e) => setBulkCreds((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="••••••••"
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', marginBottom: 6, display: 'block' }}>Domain</label>
+                <input
+                  className="field"
+                  value={bulkCreds.domain}
+                  onChange={(e) => setBulkCreds((prev) => ({ ...prev, domain: e.target.value }))}
+                  placeholder="corp.local"
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', marginBottom: 6, display: 'block' }}>Agent name prefix</label>
+                <input
+                  className="field"
+                  value={bulkCreds.agent_name_prefix}
+                  onChange={(e) => setBulkCreds((prev) => ({ ...prev, agent_name_prefix: e.target.value }))}
+                  placeholder="DC-Agent"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+              <div style={{ fontSize: 11, color: '#8a9ab5', maxWidth: 260 }}>
+                This queues one installer job per domain controller discovered in the selected snapshot.
+              </div>
+              <button
+                className="btn btn-primary"
+                disabled={!bulkCreds.username || !bulkCreds.password || !bulkCreds.domain || bulkInstallDCs.isPending || !snapshotId}
+                onClick={() => bulkInstallDCs.mutate()}
+              >
+                {bulkInstallDCs.isPending ? <Loader2 size={13} className="spin" /> : <Server size={13} />}
+                Queue installs
+              </button>
+            </div>
+
+            {bulkInstallDCs.isError && (
+              <div style={{ marginTop: 12, fontSize: 12, color: '#b91c1c', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 7, padding: '8px 10px' }}>
+                Bulk install request failed. Check snapshot coverage, credentials, and resolver reachability.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -20,6 +20,12 @@ type SignalPayload struct {
 	Labels  map[string]string `json:"labels"`
 }
 
+type ExecuteRequest struct {
+	Command string            `json:"command"`
+	Target  string            `json:"target"`
+	Params  map[string]string `json:"params,omitempty"`
+}
+
 // ForwardSignal receives a defense signal and forwards it to the signal-collector service.
 func (h *Handler) ForwardSignal(c *gin.Context) {
 	var payload SignalPayload
@@ -77,5 +83,45 @@ func (h *Handler) ForwardSignal(c *gin.Context) {
 		"status":          "forwarded",
 		"upstream_status": resp.StatusCode,
 		"agent_id":        payload.AgentID,
+	})
+}
+
+// DefendExecute executes a defense action requested by the response-orchestrator.
+func (h *Handler) DefendExecute(c *gin.Context) {
+	var req ExecuteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Command == "" || req.Target == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "command and target are required"})
+		return
+	}
+
+	result, err := h.exec.ExecuteDefenseAction(req.Command, req.Target)
+	if err != nil {
+		h.logger.Error("defense action failed",
+			zap.String("command", req.Command),
+			zap.String("target", req.Target),
+			zap.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "failed",
+			"command": req.Command,
+			"target":  req.Target,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	h.logger.Info("defense action executed",
+		zap.String("command", req.Command),
+		zap.String("target", req.Target),
+	)
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "completed",
+		"command": req.Command,
+		"target":  req.Target,
+		"result":  result,
 	})
 }

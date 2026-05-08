@@ -68,6 +68,7 @@ func main() {
 
 	// Agent remote installation via SSH
 	r.POST("/agents/install", orch.InstallAgent)
+	r.POST("/agents/install/bulk-dcs", orch.InstallAgentsForDomainControllers)
 	r.GET("/agents/install", orch.ListInstallJobs)
 	r.GET("/agents/install/:jobId", orch.GetInstallStatus)
 
