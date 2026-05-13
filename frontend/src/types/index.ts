@@ -98,18 +98,33 @@ export interface ADUser {
   sam_account_name: string
   user_principal_name: string
   display_name: string
+  description?: string
+  department?: string
+  title?: string
   domain: string
   enabled: boolean
+  locked?: boolean
   password_never_expires: boolean
+  password_expired?: boolean
+  password_not_required?: boolean
   dont_require_preauth: boolean
+  smartcard_required?: boolean
+  reversible_encryption?: boolean
+  trusted_for_delegation?: boolean
+  trusted_to_auth_for_delegation?: boolean
+  has_shadow_credentials?: boolean
+  is_gmsa?: boolean
+  is_msa?: boolean
   service_principal_names: string[]
   is_privileged: boolean
   is_service_account: boolean
   last_logon: string | null
+  last_logon_timestamp?: string | null
   pwd_last_set: string | null
   admin_count: number
   privileged_groups: string[]
   member_of: string[]
+  object_sid?: string
 }
 
 export interface ADGroup {
@@ -121,33 +136,46 @@ export interface ADGroup {
   group_scope: string
   group_category: string
   members: string[]
+  nested_groups?: string[]
+  member_of?: string[]
   is_privileged: boolean
   privilege_level: string
   admin_count: number
+  object_sid?: string
 }
 
 export interface ADComputer {
   distinguished_name: string
   name: string
+  sam_account_name?: string
   dns_host_name: string
   domain: string
   operating_system: string
   operating_system_version: string
   enabled: boolean
   is_domain_controller: boolean
+  is_read_only_dc?: boolean
   laps_enabled: boolean
   trusted_for_delegation: boolean
+  trusted_to_auth_for_delegation?: boolean
   last_logon: string | null
+  last_logon_timestamp?: string | null
+  pwd_last_set?: string | null
+  service_principal_names?: string[]
+  member_of?: string[]
+  object_sid?: string
 }
 
 export interface ADGPO {
   id: string
   name: string
+  display_name?: string
   domain: string
   status: string
   is_linked: boolean
   linked_ous: Array<{ ou_dn: string; enabled: boolean; enforced: boolean }>
   sysvol_writable_by_nonadmin: boolean
+  gpc_file_sys_path?: string
   created: string
   modified: string
 }
