@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import ReactFlow, {
   Background,
@@ -11,7 +11,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { AlertTriangle, Network, Server, Shield, Users } from 'lucide-react'
-import { agentsApi, inventoryApi, scansApi } from '../../api'
+import { agentsApi, defenseApi, inventoryApi, scansApi } from '../../api'
 import { useTheme } from '../../contexts/ThemeContext'
 import type { CollectorAgent } from '../../types'
 
@@ -91,16 +91,35 @@ export function Topology() {
     queryFn: () => agentsApi.list().then((r) => r.data),
     refetchInterval: 10_000,
   })
+  const { data: incidentsData } = useQuery({
+    queryKey: ['defense-incidents'],
+    queryFn: () => defenseApi.incidents().then(r => r.data),
+    refetchInterval: 30_000,
+  })
+
+  // Build a set of hostnames/actors implicated in open incidents for attack map overlay
+  const attackedHosts = useMemo(() => {
+    const s = new Set<string>()
+    for (const inc of incidentsData ?? []) {
+      if (inc.status !== 'open') continue
+      if (inc.primary_actor) s.add(inc.primary_actor.toLowerCase().split('\\').pop() ?? '')
+      if (inc.primary_target) s.add(inc.primary_target.toLowerCase().split('\\').pop() ?? '')
+      if (inc.metadata?.domain) s.add(inc.metadata.domain.toLowerCase())
+    }
+    return s
+  }, [incidentsData])
+
+  const openIncidentCount = (incidentsData ?? []).filter(i => i.status === 'open').length
 
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
 
   useEffect(() => {
     if (!topologyData) return
-    const graph = buildGraph(topologyData, agentsData?.agents ?? [], theme.mapStyle)
+    const graph = buildGraph(topologyData, agentsData?.agents ?? [], theme.mapStyle, attackedHosts)
     setNodes(graph.nodes)
     setEdges(graph.edges)
-  }, [agentsData?.agents, setEdges, setNodes, theme.mapStyle, topologyData])
+  }, [agentsData?.agents, attackedHosts, setEdges, setNodes, theme.mapStyle, topologyData])
 
   const summary = topologyData?.summary
   const topologyLoading = topologyData === undefined && !!snapshotId
@@ -137,6 +156,18 @@ export function Topology() {
         <p className="label">Forest topology</p>
         <h2 className="mt-2 text-2xl font-semibold text-white">Topology</h2>
 
+        {openIncidentCount > 0 && (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '6px 14px', marginTop: 12, borderRadius: 8,
+            background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.4)',
+          }}>
+            <AlertTriangle size={14} color="#dc2626" />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#dc2626' }}>
+              Attack map active — {openIncidentCount} open incident{openIncidentCount !== 1 ? 's' : ''} overlaid on topology
+            </span>
+          </div>
+        )}
         {topologyLoading ? (
           <p className="mt-4 text-sm text-slate-400">Loading topology data…</p>
         ) : summary ? (
@@ -265,7 +296,7 @@ export function Topology() {
   )
 }
 
-function buildGraph(data: any, agents: CollectorAgent[], mapStyle: 'dark' | 'light'): { nodes: Node[]; edges: Edge[] } {
+function buildGraph(data: any, agents: CollectorAgent[], mapStyle: 'dark' | 'light', attackedHosts?: Set<string>): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = []
   const edges: Edge[] = []
   const dark = mapStyle === 'dark'
@@ -377,9 +408,19 @@ function buildGraph(data: any, agents: CollectorAgent[], mapStyle: 'dark' | 'lig
     const x = position ? position.x - 32 + ((site.dcs ?? []).indexOf(dcNode.name) || 0) * 110 : 180 + index * 130
     const y = position ? 370 : 190
     const heartbeat = resolveDCHeartbeat(dcNode, agentIndex)
-    const label = heartbeat === 'unmanaged'
-      ? `${dcNode.name ?? 'DC'}\n${dcNode.operating_system ?? 'Domain Controller'}`
-      : `${dcNode.name ?? 'DC'} (${heartbeat})\n${dcNode.operating_system ?? 'Domain Controller'}`
+
+    // Attack map overlay: check if this DC is implicated in an open incident
+    const dcNameLower = (dcNode.name ?? '').toLowerCase()
+    const isUnderAttack = attackedHosts
+      ? ([dcNameLower, (dcNode.host_name ?? '').toLowerCase(), (dcNode.ip_address ?? '').toLowerCase()]
+          .filter(Boolean).some(k => attackedHosts.has(k)))
+      : false
+
+    const label = isUnderAttack
+      ? `⚠ ${dcNode.name ?? 'DC'} — ACTIVE INCIDENT\n${dcNode.operating_system ?? 'Domain Controller'}`
+      : heartbeat === 'unmanaged'
+        ? `${dcNode.name ?? 'DC'}\n${dcNode.operating_system ?? 'Domain Controller'}`
+        : `${dcNode.name ?? 'DC'} (${heartbeat})\n${dcNode.operating_system ?? 'Domain Controller'}`
     nodes.push({
       id: `dc:${dcNode.name ?? index}`,
       position: { x, y },
@@ -388,29 +429,37 @@ function buildGraph(data: any, agents: CollectorAgent[], mapStyle: 'dark' | 'lig
         minWidth: 150,
         padding: '10px 12px',
         borderRadius: '14px',
-        color: heartbeat === 'online'
-          ? colors.dcOnlineText
-          : heartbeat === 'offline'
-            ? colors.dcOfflineText
-            : colors.dcText,
-        border: `1px solid ${
-          heartbeat === 'online'
-            ? colors.dcOnlineBorder
+        color: isUnderAttack
+          ? '#ffffff'
+          : heartbeat === 'online'
+            ? colors.dcOnlineText
             : heartbeat === 'offline'
-              ? colors.dcOfflineBorder
-              : (dcNode.is_global_catalog ? colors.dcGcBorder : colors.dcBorder)
-        }`,
-        background: heartbeat === 'online'
-          ? colors.dcOnlineBg
-          : heartbeat === 'offline'
-            ? colors.dcOfflineBg
-            : (dcNode.is_global_catalog ? colors.dcGcBg : colors.dcBg),
+              ? colors.dcOfflineText
+              : colors.dcText,
+        border: isUnderAttack
+          ? '2px solid #dc2626'
+          : `1px solid ${
+              heartbeat === 'online'
+                ? colors.dcOnlineBorder
+                : heartbeat === 'offline'
+                  ? colors.dcOfflineBorder
+                  : (dcNode.is_global_catalog ? colors.dcGcBorder : colors.dcBorder)
+            }`,
+        background: isUnderAttack
+          ? 'rgba(220,38,38,0.85)'
+          : heartbeat === 'online'
+            ? colors.dcOnlineBg
+            : heartbeat === 'offline'
+              ? colors.dcOfflineBg
+              : (dcNode.is_global_catalog ? colors.dcGcBg : colors.dcBg),
         fontSize: '10px',
         lineHeight: 1.5,
         textAlign: 'center',
-        boxShadow: heartbeat === 'online'
-          ? (dark ? '0 0 0 3px rgba(22,163,74,0.18)' : '0 0 0 3px rgba(22,163,74,0.1)')
-          : 'none',
+        boxShadow: isUnderAttack
+          ? '0 0 0 4px rgba(220,38,38,0.35), 0 0 16px rgba(220,38,38,0.5)'
+          : heartbeat === 'online'
+            ? (dark ? '0 0 0 3px rgba(22,163,74,0.18)' : '0 0 0 3px rgba(22,163,74,0.1)')
+            : 'none',
       },
     })
     edges.push({

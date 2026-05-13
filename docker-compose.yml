@@ -122,6 +122,7 @@ services:
       INVENTORY_SERVICE_URL: http://inventory-service:8082
       ANALYSIS_ENGINE_URL: http://analysis-engine:8083
       AGENT_BINARY_PATH: /app/yama-agent.exe
+      YAMA_FIELD_ENC_KEY: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
     depends_on:
       postgres:
         condition: service_healthy
@@ -146,6 +147,7 @@ services:
       ANALYSIS_ENGINE_URL: http://analysis-engine:8083
       REPORT_SERVICE_URL: http://report-service:8084
       JWT_SECRET: yama_jwt_secret_change_in_prod
+      CORS_ALLOWED_ORIGIN: http://localhost
       ENV: development
     depends_on:
       redis:

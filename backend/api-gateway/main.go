@@ -48,8 +48,17 @@ func main() {
 	}
 	r := gin.New()
 	r.Use(gin.Recovery())
+	allowedOrigins := []string{
+		"http://localhost:3000",
+		"http://localhost:5173",
+		"http://localhost:80",
+		"http://localhost",
+	}
+	if origin := os.Getenv("CORS_ALLOWED_ORIGIN"); origin != "" {
+		allowedOrigins = append(allowedOrigins, origin)
+	}
 	r.Use(cors.New(cors.Config{
-		AllowAllOrigins:  true,
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},

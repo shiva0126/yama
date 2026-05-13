@@ -12,6 +12,7 @@ import (
 
 	"ad-assessment/scan-orchestrator/ldapcollector"
 	"ad-assessment/shared/config"
+	"ad-assessment/shared/crypto"
 	"ad-assessment/shared/types"
 
 	"github.com/gin-gonic/gin"
@@ -90,12 +91,19 @@ func (o *Orchestrator) RegisterAgent(c *gin.Context) {
 	apiKey := generateAPIKey()
 	id := uuid.New().String()
 
-	_, err := o.db.Exec(context.Background(),
+	encPwd, err := crypto.Encrypt(req.DCPassword)
+	if err != nil {
+		o.logger.Error("failed to encrypt dc_password", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encrypt credentials"})
+		return
+	}
+
+	_, err = o.db.Exec(context.Background(),
 		`INSERT INTO agents (id, name, hostname, domain, ip_address, port, dc_username, dc_password,
 		  api_key, status, last_seen, version, capabilities)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'online', NOW(), $10, $11)`,
 		id, req.Name, req.Hostname, req.Domain, req.IPAddress, req.Port,
-		req.DCUsername, req.DCPassword, apiKey, req.Version, req.Capabilities,
+		req.DCUsername, encPwd, apiKey, req.Version, req.Capabilities,
 	)
 	if err != nil {
 		o.logger.Error("failed to register agent", zap.Error(err))
@@ -225,15 +233,21 @@ func (o *Orchestrator) executeScan(scanID, agentID, agentAPIKey, domain string, 
 	o.publishProgress(scanID, 5, "Connecting to domain controller via LDAP...")
 
 	// Read agent credentials from DB
-	var dcIP, dcUsername, dcPassword string
+	var dcIP, dcUsername, dcPasswordEnc string
 	o.db.QueryRow(ctx,
 		`SELECT ip_address, COALESCE(dc_username,''), COALESCE(dc_password,'') FROM agents WHERE id=$1`, agentID,
-	).Scan(&dcIP, &dcUsername, &dcPassword)
+	).Scan(&dcIP, &dcUsername, &dcPasswordEnc)
 
 	if dcIP == "" {
 		o.db.Exec(ctx, `UPDATE scans SET status='failed' WHERE id=$1`, scanID)
 		o.publishProgress(scanID, 0, "Error: agent DC IP not found")
 		return
+	}
+
+	dcPassword, err := crypto.Decrypt(dcPasswordEnc)
+	if err != nil {
+		o.logger.Error("failed to decrypt dc_password", zap.Error(err))
+		dcPassword = dcPasswordEnc // fallback to raw for backward compat
 	}
 
 	// Open LDAP connection — port 389, always open on every DC

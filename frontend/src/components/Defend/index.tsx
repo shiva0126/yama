@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { AlertTriangle, FileArchive, Flame, Shield, Zap } from 'lucide-react'
-import { defenseApi, evidenceApi } from '../../api'
+import { AlertTriangle, CheckCircle, FileArchive, Flame, RotateCcw, Shield, X, XCircle, Zap } from 'lucide-react'
+import { defenseApi, evidenceApi, policyApi } from '../../api'
 import type { CollectorAgent, DefenseDetection, DefenseIncident, EvidenceBundle, ResponseAction, Severity } from '../../types'
 import { CategoryBars } from '../Charts'
 
-type Tab = 'active' | 'incidents' | 'catalog' | 'response' | 'evidence'
+type Tab = 'active' | 'incidents' | 'catalog' | 'response' | 'evidence' | 'suppressions'
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#dc2626', high: '#ea580c', medium: '#d97706', low: '#0891b2', info: '#8a9ab5',
@@ -57,11 +57,12 @@ export function Defend() {
   const openIncidents = incidents?.filter(i => i.status === 'open') ?? []
 
   const tabs: { id: Tab; label: string; icon: JSX.Element; count?: number }[] = [
-    { id: 'active',    label: 'Active',    icon: <Zap size={13} />,           count: openIncidents.length },
-    { id: 'incidents', label: 'Incidents', icon: <AlertTriangle size={13} />, count: incidents?.length },
-    { id: 'catalog',   label: 'Catalog',   icon: <Flame size={13} />,         count: summary?.detector_count },
-    { id: 'response',  label: 'Response',  icon: <Shield size={13} />,        count: responses?.length },
-    { id: 'evidence',  label: 'Evidence',  icon: <FileArchive size={13} />,   count: evidence?.total },
+    { id: 'active',       label: 'Active',       icon: <Zap size={13} />,           count: openIncidents.length },
+    { id: 'incidents',    label: 'Incidents',    icon: <AlertTriangle size={13} />, count: incidents?.length },
+    { id: 'catalog',      label: 'Catalog',      icon: <Flame size={13} />,         count: summary?.detector_count },
+    { id: 'response',     label: 'Response',     icon: <Shield size={13} />,        count: responses?.length },
+    { id: 'suppressions', label: 'Suppressions', icon: <XCircle size={13} />,       count: undefined },
+    { id: 'evidence',     label: 'Evidence',     icon: <FileArchive size={13} />,   count: evidence?.total },
   ]
 
   return (
@@ -101,11 +102,12 @@ export function Defend() {
       </div>
 
       <div style={{ flex: 1, overflow: 'hidden' }}>
-        {tab === 'active'    && <ActiveTab    incidents={openIncidents} detections={detections ?? []} />}
-        {tab === 'incidents' && <IncidentsTab incidents={incidents ?? []} />}
-        {tab === 'catalog'   && <CatalogTab   catalog={catalog} summary={summary} />}
-        {tab === 'response'  && <ResponseTab  summary={summary} responses={responses ?? []} agents={defenseAgents ?? []} />}
-        {tab === 'evidence'  && <EvidenceTab  bundles={evidence?.items ?? []} />}
+        {tab === 'active'       && <ActiveTab       incidents={openIncidents} detections={detections ?? []} />}
+        {tab === 'incidents'    && <IncidentsTab    incidents={incidents ?? []} />}
+        {tab === 'catalog'      && <CatalogTab      catalog={catalog} summary={summary} />}
+        {tab === 'response'     && <ResponseTab     summary={summary} responses={responses ?? []} agents={defenseAgents ?? []} />}
+        {tab === 'suppressions' && <SuppressionsTab />}
+        {tab === 'evidence'     && <EvidenceTab     bundles={evidence?.items ?? []} />}
       </div>
     </div>
   )
@@ -173,6 +175,26 @@ function ActiveTab({ incidents, detections }: { incidents: DefenseIncident[]; de
 
 function IncidentCard({ incident }: { incident: DefenseIncident }) {
   const sev = incident.severity as string
+  const qc = useQueryClient()
+  const [rollbackReason, setRollbackReason] = useState('')
+  const [showRollback, setShowRollback] = useState(false)
+
+  const approve = useMutation({
+    mutationFn: () => defenseApi.approve(incident.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['defense-incidents'] }),
+  })
+  const rollback = useMutation({
+    mutationFn: () => defenseApi.rollback(incident.id, rollbackReason || 'False positive'),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['defense-incidents'] }); setShowRollback(false) },
+  })
+  const close = useMutation({
+    mutationFn: () => defenseApi.close(incident.id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['defense-incidents'] }),
+  })
+
+  const chain = incident.metadata?.chain
+  const tier0 = incident.metadata?.tier0_target === 'true'
+
   return (
     <div style={{
       padding: '14px 16px', borderRadius: 10,
@@ -182,8 +204,18 @@ function IncidentCard({ incident }: { incident: DefenseIncident }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
             <span className={`sev sev-${incident.severity}`}>{incident.severity}</span>
+            {tier0 && (
+              <span style={{ fontSize: 9, fontWeight: 700, background: '#7f1d1d', color: '#fff', padding: '2px 6px', borderRadius: 4 }}>
+                TIER-0
+              </span>
+            )}
+            {chain && (
+              <span style={{ fontSize: 10, fontWeight: 600, color: '#7c3aed', background: '#ede9fe', padding: '2px 7px', borderRadius: 4 }}>
+                {chain}
+              </span>
+            )}
             <span style={{ fontSize: 13, fontWeight: 600, color: '#0f1923' }}>{incident.title}</span>
           </div>
           <div style={{ fontSize: 11, color: '#4b5c72', marginBottom: 3 }}>
@@ -192,10 +224,72 @@ function IncidentCard({ incident }: { incident: DefenseIncident }) {
           <div style={{ fontSize: 10, color: '#8a9ab5' }}>
             {formatDistanceToNow(new Date(incident.opened_at), { addSuffix: true })} ·{' '}
             {incident.detection_ids?.length ?? 0} detection{incident.detection_ids?.length !== 1 ? 's' : ''}
+            {' · '}<span style={{ textTransform: 'capitalize' }}>{incident.confidence}</span> confidence
           </div>
         </div>
-        <button className="btn btn-danger" style={{ padding: '5px 12px', fontSize: 11, flexShrink: 0 }}>Respond</button>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <button
+            onClick={() => approve.mutate()}
+            disabled={approve.isPending}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '5px 10px', fontSize: 11, fontWeight: 600,
+              background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer',
+            }}
+          >
+            <CheckCircle size={12} />
+            Approve
+          </button>
+          <button
+            onClick={() => setShowRollback(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '5px 10px', fontSize: 11, fontWeight: 600,
+              background: '#d97706', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer',
+            }}
+          >
+            <RotateCcw size={12} />
+            Rollback
+          </button>
+          <button
+            onClick={() => close.mutate()}
+            disabled={close.isPending}
+            style={{
+              padding: '5px 8px', fontSize: 11,
+              background: 'none', color: '#8a9ab5', border: '1px solid #e4e8ef', borderRadius: 6, cursor: 'pointer',
+            }}
+          >
+            <X size={12} />
+          </button>
+        </div>
       </div>
+
+      {showRollback && (
+        <div style={{ marginTop: 10, padding: '10px 12px', background: '#fff7ed', borderRadius: 8, border: '1px solid #fed7aa' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>Rollback reason</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={rollbackReason}
+              onChange={e => setRollbackReason(e.target.value)}
+              placeholder="False positive — explain why..."
+              style={{
+                flex: 1, padding: '6px 10px', fontSize: 12,
+                border: '1px solid #fed7aa', borderRadius: 6, outline: 'none',
+              }}
+            />
+            <button
+              onClick={() => rollback.mutate()}
+              disabled={rollback.isPending}
+              style={{
+                padding: '6px 12px', fontSize: 11, fontWeight: 600,
+                background: '#d97706', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer',
+              }}
+            >
+              Confirm
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -414,6 +508,154 @@ function EvidenceTab({ bundles }: { bundles: EvidenceBundle[] }) {
                   <td style={{ color: '#8a9ab5', fontFamily: 'monospace', fontSize: 11 }}>{bundle.sha256.slice(0, 12)}…</td>
                   <td style={{ fontSize: 12, color: '#8a9ab5' }}>
                     {bundle.created_at ? formatDistanceToNow(new Date(bundle.created_at), { addSuffix: true }) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── Suppressions / False-Positive Register ───────────────── */
+function SuppressionsTab() {
+  const qc = useQueryClient()
+  const [form, setForm] = useState({ scope_type: 'account', scope_value: '', reason: '', expires_at: '' })
+  const [showForm, setShowForm] = useState(false)
+
+  const { data: exclusions, isLoading } = useQuery({
+    queryKey: ['policy-exclusions'],
+    queryFn: () => policyApi.listExclusions().then(r => (r.data as any)?.exclusions ?? r.data ?? []),
+    refetchInterval: 30_000,
+  })
+
+  const add = useMutation({
+    mutationFn: () => policyApi.addExclusion({ ...form, created_by: 'operator' }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['policy-exclusions'] }); setForm({ scope_type: 'account', scope_value: '', reason: '', expires_at: '' }); setShowForm(false) },
+  })
+
+  const remove = useMutation({
+    mutationFn: (id: string) => policyApi.deleteExclusion(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policy-exclusions'] }),
+  })
+
+  const rows: any[] = Array.isArray(exclusions) ? exclusions : []
+
+  return (
+    <div style={{ padding: '20px 24px', height: '100%', overflowY: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#8a9ab5', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            False-Positive Suppressions
+          </div>
+          <div style={{ fontSize: 12, color: '#4b5c72', marginTop: 2 }}>
+            Suppress known-good accounts, hosts, or detectors from triggering incidents.
+          </div>
+        </div>
+        <button
+          onClick={() => setShowForm(v => !v)}
+          style={{ padding: '7px 14px', fontSize: 12, fontWeight: 600, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer' }}
+        >
+          + Add suppression
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', display: 'block', marginBottom: 4 }}>Scope type</label>
+              <select
+                value={form.scope_type}
+                onChange={e => setForm(f => ({ ...f, scope_type: e.target.value }))}
+                style={{ width: '100%', padding: '7px 10px', fontSize: 12, border: '1px solid #bfdbfe', borderRadius: 6, outline: 'none' }}
+              >
+                <option value="account">Account</option>
+                <option value="host">Host</option>
+                <option value="detector">Detector ID</option>
+                <option value="domain">Domain</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', display: 'block', marginBottom: 4 }}>Value</label>
+              <input
+                value={form.scope_value}
+                onChange={e => setForm(f => ({ ...f, scope_value: e.target.value }))}
+                placeholder={form.scope_type === 'account' ? 'DOMAIN\\svc-backup' : form.scope_type === 'detector' ? 'KRB-001' : 'hostname or domain'}
+                style={{ width: '100%', padding: '7px 10px', fontSize: 12, border: '1px solid #bfdbfe', borderRadius: 6, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', display: 'block', marginBottom: 4 }}>Reason</label>
+              <input
+                value={form.reason}
+                onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+                placeholder="Known-good backup service account — confirmed with security team"
+                style={{ width: '100%', padding: '7px 10px', fontSize: 12, border: '1px solid #bfdbfe', borderRadius: 6, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#4b5c72', display: 'block', marginBottom: 4 }}>Expires (optional)</label>
+              <input
+                type="date"
+                value={form.expires_at}
+                onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))}
+                style={{ width: '100%', padding: '7px 10px', fontSize: 12, border: '1px solid #bfdbfe', borderRadius: 6, outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => add.mutate()}
+              disabled={!form.scope_value || !form.reason || add.isPending}
+              style={{ padding: '7px 16px', fontSize: 12, fontWeight: 600, background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', opacity: (!form.scope_value || !form.reason) ? 0.5 : 1 }}
+            >
+              Save
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              style={{ padding: '7px 12px', fontSize: 12, background: 'none', border: '1px solid #bfdbfe', borderRadius: 6, cursor: 'pointer', color: '#4b5c72' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div style={{ color: '#8a9ab5', fontSize: 13 }}>Loading suppressions…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '40px 0', color: '#8a9ab5' }}>
+          <XCircle size={32} style={{ opacity: 0.2, margin: '0 auto 10px', display: 'block' }} />
+          <div style={{ fontSize: 13, fontWeight: 500 }}>No suppressions</div>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Add accounts, hosts, or detector IDs to suppress known false positives.</div>
+        </div>
+      ) : (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <table className="data-table">
+            <thead>
+              <tr><th>Type</th><th>Value</th><th>Reason</th><th>Expires</th><th>Created by</th><th></th></tr>
+            </thead>
+            <tbody>
+              {rows.map((ex: any) => (
+                <tr key={ex.id}>
+                  <td style={{ textTransform: 'capitalize', color: '#4b5c72' }}>{ex.scope_type}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 11, color: '#0f1923', fontWeight: 500 }}>{ex.scope_value}</td>
+                  <td style={{ color: '#4b5c72', fontSize: 12 }}>{ex.reason}</td>
+                  <td style={{ color: '#8a9ab5', fontSize: 11 }}>{ex.expires_at ? new Date(ex.expires_at).toLocaleDateString() : 'Never'}</td>
+                  <td style={{ color: '#8a9ab5', fontSize: 11 }}>{ex.created_by ?? '—'}</td>
+                  <td>
+                    <button
+                      onClick={() => remove.mutate(ex.id)}
+                      disabled={remove.isPending}
+                      style={{ padding: '3px 8px', fontSize: 11, background: 'none', border: '1px solid #fca5a5', borderRadius: 5, cursor: 'pointer', color: '#dc2626' }}
+                    >
+                      Remove
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -395,7 +395,19 @@ func buildFullSnapshot(pool *pgxpool.Pool, snapshotID string, logger *zap.Logger
 	return snapshot
 }
 
+var allowedInventoryTables = map[string]bool{
+	"ad_users":               true,
+	"ad_groups":              true,
+	"ad_computers":           true,
+	"ad_gpos":                true,
+	"ad_domain_controllers":  true,
+}
+
 func queryInventory(c *gin.Context, pool *pgxpool.Pool, table, snapshotID string) {
+	if !allowedInventoryTables[table] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown table"})
+		return
+	}
 	rows, err := pool.Query(context.Background(),
 		`SELECT data FROM `+table+` WHERE snapshot_id=$1`, snapshotID)
 	if err != nil {

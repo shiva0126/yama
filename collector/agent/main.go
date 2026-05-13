@@ -19,6 +19,7 @@ import (
 
 	"ad-assessment/collector-agent/executor"
 	"ad-assessment/collector-agent/handlers"
+	"ad-assessment/collector-agent/sensor"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -29,6 +30,7 @@ func main() {
 	psDir   := flag.String("ps-dir", "./powershell/modules", "PowerShell modules directory")
 	csDir   := flag.String("cs-dir", "./csharp/bin", "C# tools directory")
 	apiKey  := flag.String("api-key", os.Getenv("AGENT_API_KEY"), "API key for authentication")
+	agentID := flag.String("agent-id", os.Getenv("AGENT_ID"), "Agent UUID")
 	flag.Parse()
 
 	if *apiKey == "" {
@@ -43,6 +45,14 @@ func main() {
 
 	// Request handlers
 	h := handlers.New(exec, logger)
+
+	// Sensor: start host-level event collection (ETW on Windows, no-op elsewhere)
+	hostname, _ := os.Hostname()
+	domain := os.Getenv("AGENT_DOMAIN")
+	agentSensor := sensor.New(*agentID, domain, hostname, sensor.EnvSignalCollectorURL(), logger)
+	sensorCtx, sensorCancel := context.WithCancel(context.Background())
+	defer sensorCancel()
+	agentSensor.Start(sensorCtx)
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -66,16 +76,22 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
 			"service": "collector-agent",
-			"version": "1.1.0",
+			"version": "1.2.0",
 			"capabilities": []string{
 				"topology", "users", "groups", "computers",
 				"gpos", "kerberos", "acls", "dcinfo", "trusts", "ous", "fgpp", "adcs", "sites",
 				"service-identities", "ad-vuln-scan",
 				"defense:signal-forward", "defense:status", "defense:execute",
+				"sensor:etw", "sensor:process-watch", "sensor:service-watch", "sensor:sysmon",
 			},
 			"defense_mode": os.Getenv("DEFENSE_MODE") == "true",
 			"platform":     runtime.GOOS,
 		})
+	})
+
+	r.GET("/sensor/health", func(c *gin.Context) {
+		h := agentSensor.Health()
+		c.JSON(http.StatusOK, h)
 	})
 
 	// Collection endpoints — each maps to a PowerShell module

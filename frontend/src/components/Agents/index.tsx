@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { Loader2, Plus, Server, Trash2, Wifi, WifiOff, X } from 'lucide-react'
+import { CheckCircle, Loader2, Plus, Server, Trash2, Wifi, WifiOff, X, XCircle } from 'lucide-react'
 import { agentsApi } from '../../api'
-import type { InstallRequest } from '../../types'
+import type { InstallJob, InstallRequest } from '../../types'
 
 export function Agents() {
   const qc = useQueryClient()
   const [showInstall, setShowInstall] = useState(false)
+  const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [form, setForm] = useState<InstallRequest>({
     target_ip: '', username: '', password: '', domain: '', agent_name: '',
   })
@@ -18,6 +19,24 @@ export function Agents() {
     refetchInterval: 10_000,
   })
 
+  const { data: jobData } = useQuery({
+    queryKey: ['install-job', activeJobId],
+    queryFn: () => agentsApi.getInstallStatus(activeJobId!).then(r => r.data),
+    enabled: !!activeJobId,
+    refetchInterval: (q) => {
+      const status = q.state.data?.status
+      return status === 'completed' || status === 'failed' ? false : 2000
+    },
+  })
+
+  const { data: jobsData } = useQuery({
+    queryKey: ['agents-install-jobs'],
+    queryFn: () => agentsApi.listInstallJobs().then(r => r.data),
+    refetchInterval: 15_000,
+  })
+
+  const recentJobs: InstallJob[] = jobsData?.jobs ?? []
+
   const deleteAgent = useMutation({
     mutationFn: (id: string) => agentsApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
@@ -25,10 +44,11 @@ export function Agents() {
 
   const install = useMutation({
     mutationFn: () => agentsApi.install(form),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      setActiveJobId(res.data.job_id)
       setShowInstall(false)
       setForm({ target_ip: '', username: '', password: '', domain: '', agent_name: '' })
-      qc.invalidateQueries({ queryKey: ['agents'] })
+      qc.invalidateQueries({ queryKey: ['agents-install-jobs'] })
     },
   })
 
@@ -73,6 +93,64 @@ export function Agents() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Active install job progress */}
+      {activeJobId && jobData && (
+        <div style={{
+          marginBottom: 20, padding: '14px 18px', borderRadius: 10,
+          background: jobData.status === 'completed' ? '#f0fdf4' : jobData.status === 'failed' ? '#fef2f2' : '#eff6ff',
+          border: `1px solid ${jobData.status === 'completed' ? '#bbf7d0' : jobData.status === 'failed' ? '#fecaca' : '#bfdbfe'}`,
+          display: 'flex', alignItems: 'center', gap: 14,
+        }}>
+          {jobData.status === 'completed'
+            ? <CheckCircle size={18} color="#16a34a" />
+            : jobData.status === 'failed'
+            ? <XCircle size={18} color="#dc2626" />
+            : <Loader2 size={18} color="#2563eb" className="spin" />}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#0f1923' }}>
+              {jobData.status === 'completed' ? 'Agent installed successfully' : jobData.status === 'failed' ? 'Installation failed' : `Installing on ${jobData.target_ip}…`}
+            </div>
+            <div style={{ fontSize: 11, color: '#4b5c72', marginTop: 2 }}>{jobData.message || jobData.error || ''}</div>
+            {jobData.status === 'running' && (
+              <div style={{ marginTop: 8, height: 4, background: '#dbeafe', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: '#2563eb', borderRadius: 2, width: `${jobData.progress ?? 0}%`, transition: 'width 0.4s' }} />
+              </div>
+            )}
+          </div>
+          {(jobData.status === 'completed' || jobData.status === 'failed') && (
+            <button className="btn-icon" onClick={() => setActiveJobId(null)}><X size={14} /></button>
+          )}
+        </div>
+      )}
+
+      {/* Recent install jobs */}
+      {recentJobs.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div className="section-label" style={{ marginBottom: 8 }}>Recent installs</div>
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <table className="data-table">
+              <thead><tr><th>Agent</th><th>Target</th><th>Status</th><th>Message</th></tr></thead>
+              <tbody>
+                {recentJobs.slice(0, 5).map(job => (
+                  <tr key={job.id} onClick={() => setActiveJobId(job.id)} style={{ cursor: 'pointer' }}>
+                    <td className="primary">{job.agent_name}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{job.target_ip}</td>
+                    <td>
+                      <span className={`badge badge-${job.status === 'completed' ? 'ok' : job.status === 'failed' ? 'error' : 'info'}`}>
+                        {job.status}
+                      </span>
+                    </td>
+                    <td style={{ color: '#8a9ab5', fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {job.message || job.error || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"ad-assessment/defense-shared/catalog"
@@ -227,10 +228,107 @@ func main() {
 		server.WriteJSON(w, http.StatusOK, map[string]any{"actions": actions, "total": len(actions)})
 	})
 
-	// ── Demo endpoints (used by frontend before real telemetry) ──
-	mux.HandleFunc("/incidents/demo", func(w http.ResponseWriter, _ *http.Request) {
-		server.WriteJSON(w, http.StatusOK, catalog.DemoIncidents(time.Now().UTC()))
+	// ── Incident action endpoints (approve / rollback / close) ────────────────
+	// Pattern: /incidents/{id}/approve  /incidents/{id}/rollback  /incidents/{id}/close
+	mux.HandleFunc("/incidents/", func(w http.ResponseWriter, r *http.Request) {
+		// Parse: /incidents/{id}/{action}
+		path := strings.TrimPrefix(r.URL.Path, "/incidents/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) != 2 {
+			server.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		incidentID, action := parts[0], parts[1]
+		if r.Method != http.MethodPost {
+			server.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+
+		switch action {
+		case "approve":
+			// Approve all planned response actions for this incident
+			tag, err := pool.Exec(context.Background(), `
+				UPDATE defense_response_actions
+				SET    status = 'approved', executed_at = NOW()
+				WHERE  incident_id = $1 AND status = 'planned'
+			`, incidentID)
+			if err != nil {
+				server.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			server.WriteJSON(w, http.StatusOK, map[string]any{"incident_id": incidentID, "approved_actions": tag.RowsAffected()})
+
+		case "rollback":
+			// Mark all executed actions as rolled-back, re-open incident
+			var req struct {
+				Reason string `json:"reason"`
+			}
+			json.NewDecoder(r.Body).Decode(&req)
+			if req.Reason == "" {
+				req.Reason = "Operator-initiated rollback"
+			}
+			pool.Exec(context.Background(), `
+				UPDATE defense_response_actions
+				SET    status = 'rolled-back', result_summary = $2, executed_at = NOW()
+				WHERE  incident_id = $1 AND status IN ('approved','completed','executing')
+			`, incidentID, req.Reason)
+			pool.Exec(context.Background(), `
+				UPDATE defense_incidents
+				SET    status = 'open', last_updated_at = NOW()
+				WHERE  id = $1
+			`, incidentID)
+			server.WriteJSON(w, http.StatusOK, map[string]any{"incident_id": incidentID, "status": "rolled-back"})
+
+		case "close":
+			pool.Exec(context.Background(), `
+				UPDATE defense_incidents
+				SET    status = 'closed', closed_at = NOW(), last_updated_at = NOW()
+				WHERE  id = $1
+			`, incidentID)
+			server.WriteJSON(w, http.StatusOK, map[string]any{"incident_id": incidentID, "status": "closed"})
+
+		case "demo":
+			// fall through to demo block below
+			incidents := catalog.DemoIncidents(time.Now().UTC())
+			server.WriteJSON(w, http.StatusOK, incidents)
+
+		default:
+			server.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown action: " + action})
+		}
 	})
+
+	// ── Response action approval endpoint ─────────────────────────────────────
+	mux.HandleFunc("/responses/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/responses/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) != 2 {
+			server.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		actionID, sub := parts[0], parts[1]
+		if r.Method != http.MethodPost {
+			server.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		switch sub {
+		case "approve":
+			pool.Exec(context.Background(), `
+				UPDATE defense_response_actions SET status='approved', executed_at=NOW() WHERE id=$1
+			`, actionID)
+			server.WriteJSON(w, http.StatusOK, map[string]any{"action_id": actionID, "status": "approved"})
+		case "rollback":
+			var req struct{ Reason string `json:"reason"` }
+			json.NewDecoder(r.Body).Decode(&req)
+			pool.Exec(context.Background(), `
+				UPDATE defense_response_actions SET status='rolled-back', result_summary=$2, executed_at=NOW() WHERE id=$1
+			`, actionID, req.Reason)
+			server.WriteJSON(w, http.StatusOK, map[string]any{"action_id": actionID, "status": "rolled-back"})
+		default:
+			server.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "unknown sub: " + sub})
+		}
+	})
+
+	// ── Demo endpoints ────────────────────────────────────────────────────────
 	mux.HandleFunc("/detections/demo", func(w http.ResponseWriter, _ *http.Request) {
 		server.WriteJSON(w, http.StatusOK, catalog.DemoDetections(time.Now().UTC()))
 	})

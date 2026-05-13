@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"ad-assessment/api-gateway/handlers"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -21,16 +23,17 @@ func JWTAuth(secret string) gin.HandlerFunc {
 			return
 		}
 
-		// TODO: Validate actual JWT token with golang-jwt
-		// For now pass through in development
-		token := parts[1]
-		if token == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "empty token"})
+		claims, err := handlers.ParseJWTClaims(parts[1], secret)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 			return
 		}
 
-		// Set user context
-		c.Set("username", "admin") // Extract from real JWT claims
+		username, _ := claims["username"].(string)
+		if username == "" {
+			username, _ = claims["sub"].(string)
+		}
+		c.Set("username", username)
 		c.Next()
 	}
 }

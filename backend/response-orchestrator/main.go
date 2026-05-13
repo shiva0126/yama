@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"ad-assessment/defense-shared/config"
@@ -118,12 +119,45 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+cfg.HTTPPort, mux))
 }
 
+// protectedAccounts must never be auto-disabled (require manual approval even at critical).
+var protectedAccounts = []string{
+	"krbtgt", "administrator", "svc-backup", "svc-monitoring",
+}
+
+func isProtected(actor string) bool {
+	lower := strings.ToLower(strings.TrimSpace(actor))
+	for _, p := range protectedAccounts {
+		if lower == p || strings.HasSuffix(lower, "\\"+p) {
+			return true
+		}
+	}
+	return false
+}
+
 func planResponse(incident events.Incident) []events.ResponseAction {
 	actions := []events.ResponseAction{}
+	chain := incident.Metadata["chain"]
 
+	// Evidence collection — always automatic for critical
+	if incident.Severity == "critical" || incident.Severity == "high" {
+		actions = append(actions, events.ResponseAction{
+			IncidentID:  incident.ID,
+			ActionType:  "collect-evidence",
+			Mode:        "automatic",
+			Status:      "planned",
+			TargetType:  "domain",
+			TargetValue: incident.Metadata["domain"],
+			Metadata: map[string]string{
+				"reason":   "Snapshot AD state for forensic review: " + incident.Title,
+				"rollback": "N/A — evidence collection is non-destructive",
+			},
+		})
+	}
+
+	// Account-level responses
 	if incident.PrimaryActor != "" {
 		mode := "approval-required"
-		if incident.Severity == "critical" && incident.Confidence == "critical-confirmed" {
+		if incident.Severity == "critical" && incident.Confidence == "critical-confirmed" && !isProtected(incident.PrimaryActor) {
 			mode = "automatic"
 		}
 		actions = append(actions, events.ResponseAction{
@@ -134,22 +168,91 @@ func planResponse(incident events.Incident) []events.ResponseAction {
 			TargetType:  "account",
 			TargetValue: incident.PrimaryActor,
 			Metadata: map[string]string{
-				"reason":   "Primary actor implicated in " + incident.Title,
-				"rollback": "Re-enable via AD Users and Computers after investigation",
+				"reason":    "Primary actor in: " + incident.Title,
+				"rollback":  "Re-enable via: Enable-ADAccount -Identity '" + incident.PrimaryActor + "'",
+				"protected": fmt.Sprintf("%v", isProtected(incident.PrimaryActor)),
+			},
+		})
+
+		// Revoke Kerberos tickets for DCSync, Shadow Creds, RBCD chains, and offensive tooling
+		if chain == "DCSync Attack" || chain == "Shadow Credentials Attack" || chain == "RBCD Privilege Escalation" || chain == "Offensive Tooling Detected" {
+			actions = append(actions, events.ResponseAction{
+				IncidentID:  incident.ID,
+				ActionType:  "revoke-tickets",
+				Mode:        "approval-required",
+				Status:      "planned",
+				TargetType:  "account",
+				TargetValue: incident.PrimaryActor,
+				Metadata: map[string]string{
+					"reason":   "Invalidate Kerberos tickets for compromised actor",
+					"rollback": "User re-authenticates after ticket expiry",
+				},
+			})
+		}
+
+		// Reset password for privilege escalation chains
+		if incident.Severity == "critical" {
+			actions = append(actions, events.ResponseAction{
+				IncidentID:  incident.ID,
+				ActionType:  "reset-password",
+				Mode:        "approval-required",
+				Status:      "planned",
+				TargetType:  "account",
+				TargetValue: incident.PrimaryActor,
+				Metadata: map[string]string{
+					"reason":   "Force password reset to invalidate stolen credentials",
+					"rollback": "Inform user of new password via secure channel",
+				},
+			})
+		}
+	}
+
+	// Host isolation for LSASS dump or lateral movement
+	if chain == "Credential Extraction via LSASS" || chain == "NTLM Relay Chain" {
+		if incident.PrimaryTarget != "" {
+			actions = append(actions, events.ResponseAction{
+				IncidentID:  incident.ID,
+				ActionType:  "block-network",
+				Mode:        "approval-required",
+				Status:      "planned",
+				TargetType:  "host",
+				TargetValue: incident.PrimaryTarget,
+				Metadata: map[string]string{
+					"reason":   "Isolate compromised host from lateral movement",
+					"rollback": "Remove Windows Firewall block rule added by response",
+				},
+			})
+		}
+	}
+
+	// Certificate revocation for ADCS chains
+	if chain == "NTLM Relay Chain" || strings.Contains(incident.Title, "ADCS") {
+		actions = append(actions, events.ResponseAction{
+			IncidentID:  incident.ID,
+			ActionType:  "revoke-certificate",
+			Mode:        "approval-required",
+			Status:      "planned",
+			TargetType:  "certificate",
+			TargetValue: incident.PrimaryActor,
+			Metadata: map[string]string{
+				"reason":   "Revoke certificates issued via relay or ESC attack",
+				"rollback": "Re-enroll via legitimate certificate request",
 			},
 		})
 	}
 
-	if incident.Severity == "critical" {
+	// Computer quarantine for DCShadow or service install lateral movement
+	if chain == "GPO Abuse for Persistence" {
 		actions = append(actions, events.ResponseAction{
 			IncidentID:  incident.ID,
-			ActionType:  "collect-evidence",
-			Mode:        "automatic",
+			ActionType:  "quarantine-computer",
+			Mode:        "approval-required",
 			Status:      "planned",
-			TargetType:  "domain",
-			TargetValue: incident.Metadata["domain"],
+			TargetType:  "computer",
+			TargetValue: incident.PrimaryTarget,
 			Metadata: map[string]string{
-				"reason": "Critical incident — snapshot AD state for forensic review",
+				"reason":   "Remove compromised computer from production OUs",
+				"rollback": "Move computer account back to production OU",
 			},
 		})
 	}
@@ -172,6 +275,41 @@ func executeAction(pool *pgxpool.Pool, action events.ResponseAction) events.Resp
 		execErr = dispatchAgentCommand(pool, action.TargetValue, "disable-account")
 		if execErr == nil {
 			resultSummary = "Account disable command dispatched to agent"
+		} else {
+			resultSummary = "Agent dispatch failed: " + execErr.Error()
+		}
+	case "reset-password":
+		execErr = dispatchAgentCommand(pool, action.TargetValue, "reset-password")
+		if execErr == nil {
+			resultSummary = "Password reset command dispatched to agent"
+		} else {
+			resultSummary = "Agent dispatch failed: " + execErr.Error()
+		}
+	case "revoke-tickets":
+		execErr = dispatchAgentCommand(pool, action.TargetValue, "revoke-tickets")
+		if execErr == nil {
+			resultSummary = "Kerberos ticket revocation dispatched to agent"
+		} else {
+			resultSummary = "Agent dispatch failed: " + execErr.Error()
+		}
+	case "block-network":
+		execErr = dispatchAgentCommand(pool, action.TargetValue, "block-network")
+		if execErr == nil {
+			resultSummary = "Network block command dispatched to agent"
+		} else {
+			resultSummary = "Agent dispatch failed: " + execErr.Error()
+		}
+	case "revoke-certificate":
+		execErr = dispatchAgentCommand(pool, action.TargetValue, "revoke-certificate")
+		if execErr == nil {
+			resultSummary = "Certificate revocation dispatched to agent"
+		} else {
+			resultSummary = "Agent dispatch failed: " + execErr.Error()
+		}
+	case "quarantine-computer":
+		execErr = dispatchAgentCommand(pool, action.TargetValue, "quarantine-computer")
+		if execErr == nil {
+			resultSummary = "Computer quarantine dispatched to agent"
 		} else {
 			resultSummary = "Agent dispatch failed: " + execErr.Error()
 		}

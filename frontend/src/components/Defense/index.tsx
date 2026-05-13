@@ -10,7 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { defenseApi } from '../../api'
+import { defenseApi, evidenceApi, policyApi } from '../../api'
 import type { DefenseIncident, DefenseDetection } from '../../types'
 
 const tone: Record<string, string> = {
@@ -439,8 +439,8 @@ export function DefenseEvidence() {
 
   const createBundle = useMutation({
     mutationFn: () =>
-      defenseApi
-        .evidence({
+      evidenceApi
+        .bundle({
           incident_id: selectedIncidentId || incidents?.[0]?.id || 'inc-demo-001',
           metadata: {
             detector: 'CRED-001',
@@ -499,7 +499,7 @@ export function DefenseEvidence() {
 export function DefensePolicy() {
   const { data } = useQuery({
     queryKey: ['defense-policy'],
-    queryFn: () => defenseApi.policy().then((r) => r.data),
+    queryFn: () => policyApi.get().then((r) => r.data),
     refetchInterval: 20_000,
   })
   const policyLoading = data === undefined
@@ -532,7 +532,7 @@ export function DefensePolicy() {
               <div key={action} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold text-slate-950">{action}</p>
-                  <span className="chip uppercase">{threshold}</span>
+                  <span className="chip uppercase">{String(threshold)}</span>
                 </div>
               </div>
             ))

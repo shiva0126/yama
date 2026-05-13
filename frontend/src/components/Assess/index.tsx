@@ -518,15 +518,28 @@ function FindingsTab() {
   const [selectedScan, setSelectedScan] = useState('')
   const [severity, setSeverity] = useState<Severity | ''>('')
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<Finding | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const { data: scansData } = useQuery({ queryKey: ['scans'], queryFn: () => scansApi.list().then(r => r.data) })
-  const { data: findingsData, isLoading } = useQuery({
-    queryKey: ['findings', selectedScan],
-    queryFn: () => selectedScan ? findingsApi.getByScan(selectedScan).then(r => r.data) : findingsApi.list().then(r => r.data),
-  })
 
   const completedScans = scansData?.scans?.filter(s => s.status === 'completed') ?? []
+
+  // Auto-select the latest completed scan on first load
+  const latestScanId = completedScans[0]?.id ?? ''
+  const effectiveScan = selectedScan || latestScanId
+
+  const { data: findingsData, isLoading } = useQuery({
+    queryKey: ['findings', effectiveScan],
+    queryFn: () => effectiveScan ? findingsApi.getByScan(effectiveScan).then(r => r.data) : findingsApi.list().then(r => r.data),
+  })
+
+  // Fetch full finding detail when one is selected
+  const { data: fullFinding, isLoading: detailLoading } = useQuery({
+    queryKey: ['finding-detail', selectedId],
+    queryFn: () => findingsApi.get(selectedId!).then(r => r.data),
+    enabled: !!selectedId,
+  })
+
   const findings = findingsData?.findings ?? []
 
   const filtered = useMemo(() => {
@@ -584,7 +597,7 @@ function FindingsTab() {
           padding: '10px 20px', background: '#fff', borderBottom: '1px solid #e4e8ef',
           display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0, flexWrap: 'wrap',
         }}>
-          <select className="field" style={{ width: 220, flexShrink: 0 }} value={selectedScan} onChange={e => setSelectedScan(e.target.value)}>
+          <select className="field" style={{ width: 220, flexShrink: 0 }} value={effectiveScan} onChange={e => setSelectedScan(e.target.value)}>
             <option value="">All scans</option>
             {completedScans.map(s => <option key={s.id} value={s.id}>{s.domain} — {s.completed_at ? format(new Date(s.completed_at), 'MMM d') : ''}</option>)}
           </select>
@@ -626,7 +639,7 @@ function FindingsTab() {
                 <thead><tr><th>Severity</th><th>Finding</th><th>Category</th><th>Objects affected</th><th style={{ width: 30 }}></th></tr></thead>
                 <tbody>
                   {filtered.map(f => (
-                    <tr key={f.id} onClick={() => setSelected(f)}>
+                    <tr key={f.id} onClick={() => setSelectedId(f.id)} style={{ background: selectedId === f.id ? '#f0f6ff' : undefined }}>
                       <td><span className={`sev sev-${f.severity}`}>{f.severity}</span></td>
                       <td className="primary">{f.name}</td>
                       <td>{f.category}</td>
@@ -642,46 +655,54 @@ function FindingsTab() {
       </div>
 
       {/* Detail drawer */}
-      {selected && (
+      {selectedId && (
         <div style={{ width: 380, flexShrink: 0, background: '#fff', borderLeft: '1px solid #e4e8ef', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '14px 18px', borderBottom: '1px solid #e4e8ef', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span className={`sev sev-${selected.severity}`}>{selected.severity}</span>
-            <button className="btn-icon" onClick={() => setSelected(null)}><X size={15} /></button>
+            {fullFinding && <span className={`sev sev-${fullFinding.severity}`}>{fullFinding.severity}</span>}
+            <button className="btn-icon" onClick={() => setSelectedId(null)}><X size={15} /></button>
           </div>
-          <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#0f1923', marginBottom: 6 }}>{selected.name}</div>
-              <div style={{ fontSize: 12.5, color: '#4b5c72', lineHeight: 1.65 }}>{selected.description}</div>
+          {detailLoading ? (
+            <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 28 }} />)}
             </div>
-            {selected.affected_objects?.length > 0 && (
+          ) : fullFinding ? (
+            <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
-                <div className="section-label" style={{ marginBottom: 8 }}>Affected objects</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  {selected.affected_objects.slice(0, 10).map((obj, i) => (
-                    <div key={i} style={{ fontSize: 11.5, color: '#4b5c72', background: '#f4f6f9', padding: '6px 10px', borderRadius: 5, fontFamily: 'monospace', border: '1px solid #e4e8ef' }}>
-                      {obj.name || obj.dn}
-                    </div>
-                  ))}
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#0f1923', marginBottom: 6 }}>{fullFinding.name}</div>
+                <div style={{ fontSize: 12.5, color: '#4b5c72', lineHeight: 1.65 }}>{fullFinding.description}</div>
+              </div>
+              {fullFinding.affected_objects?.length > 0 && (
+                <div>
+                  <div className="section-label" style={{ marginBottom: 8 }}>Affected objects ({fullFinding.affected_objects.length})</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {fullFinding.affected_objects.slice(0, 10).map((obj, i) => (
+                      <div key={i} style={{ fontSize: 11.5, color: '#4b5c72', background: '#f4f6f9', padding: '6px 10px', borderRadius: 5, fontFamily: 'monospace', border: '1px solid #e4e8ef' }}>
+                        {obj.name || obj.dn}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-            <div>
-              <div className="section-label" style={{ marginBottom: 8 }}>Remediation</div>
-              <div style={{ fontSize: 12.5, color: '#4b5c72', lineHeight: 1.65, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, padding: '10px 12px' }}>
-                {selected.remediation}
-              </div>
+              )}
+              {fullFinding.remediation && (
+                <div>
+                  <div className="section-label" style={{ marginBottom: 8 }}>Remediation</div>
+                  <div style={{ fontSize: 12.5, color: '#4b5c72', lineHeight: 1.65, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 7, padding: '10px 12px' }}>
+                    {fullFinding.remediation}
+                  </div>
+                </div>
+              )}
+              {fullFinding.mitre?.length > 0 && (
+                <div>
+                  <div className="section-label" style={{ marginBottom: 8 }}>MITRE ATT&CK</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    {fullFinding.mitre.map(m => (
+                      <span key={m} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', fontWeight: 600 }}>{m}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            {selected.mitre?.length > 0 && (
-              <div>
-                <div className="section-label" style={{ marginBottom: 8 }}>MITRE ATT&CK</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                  {selected.mitre.map(m => (
-                    <span key={m} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', fontWeight: 600 }}>{m}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          ) : null}
         </div>
       )}
     </div>

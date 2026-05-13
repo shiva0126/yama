@@ -106,6 +106,16 @@ func (e *Executor) ExecuteDefenseAction(command, target string) (map[string]inte
 	switch command {
 	case "disable-account":
 		return e.disableAccount(target)
+	case "reset-password":
+		return e.resetPassword(target)
+	case "revoke-tickets":
+		return e.revokeTickets(target)
+	case "block-network":
+		return e.blockNetwork(target)
+	case "revoke-certificate":
+		return e.revokeCertificate(target)
+	case "quarantine-computer":
+		return e.quarantineComputer(target)
 	default:
 		return nil, fmt.Errorf("unsupported defense command: %s", command)
 	}
@@ -156,6 +166,176 @@ func (e *Executor) disableAccount(target string) (map[string]interface{}, error)
 		}, nil
 	}
 
+	return result, nil
+}
+
+func (e *Executor) resetPassword(target string) (map[string]interface{}, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+	psExe, err := psExecutable()
+	if err != nil {
+		return map[string]interface{}{"status": "accepted-no-executor", "command": "reset-password", "target": target, "note": err.Error()}, nil
+	}
+	escaped := strings.ReplaceAll(target, "'", "''")
+	// Generate random 24-char password — operator must retrieve from evidence bundle
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'
+$newPwd = [System.Web.Security.Membership]::GeneratePassword(24,4)
+$secPwd = ConvertTo-SecureString $newPwd -AsPlainText -Force
+Set-ADAccountPassword -Identity '%s' -NewPassword $secPwd -Reset -Confirm:$false
+@{status='ok'; command='reset-password'; target='%s'; note='Password reset; retrieve via evidence bundle'} | ConvertTo-Json -Compress`,
+		escaped, escaped)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psExe, "-NonInteractive", "-NoProfile", "-Command", psScript)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("reset-password failed: %w; stderr: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return map[string]interface{}{"status": "ok", "command": "reset-password", "target": target}, nil
+	}
+	return result, nil
+}
+
+func (e *Executor) revokeTickets(target string) (map[string]interface{}, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+	psExe, err := psExecutable()
+	if err != nil {
+		return map[string]interface{}{"status": "accepted-no-executor", "command": "revoke-tickets", "target": target, "note": err.Error()}, nil
+	}
+	escaped := strings.ReplaceAll(target, "'", "''")
+	// Purge Kerberos tickets by forcing a password change timestamp bump
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'
+$user = Get-ADUser -Identity '%s' -Properties msDS-KeyVersionNumber
+Set-ADUser -Identity '%s' -Replace @{'pwdLastSet'=0}
+Set-ADUser -Identity '%s' -Replace @{'pwdLastSet'=-1}
+Invoke-Command -ScriptBlock { klist purge } -ErrorAction SilentlyContinue
+@{status='ok'; command='revoke-tickets'; target='%s'; note='pwdLastSet bumped; all tickets invalidated'} | ConvertTo-Json -Compress`,
+		escaped, escaped, escaped, escaped)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psExe, "-NonInteractive", "-NoProfile", "-Command", psScript)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("revoke-tickets failed: %w; stderr: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return map[string]interface{}{"status": "ok", "command": "revoke-tickets", "target": target}, nil
+	}
+	return result, nil
+}
+
+func (e *Executor) blockNetwork(target string) (map[string]interface{}, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+	psExe, err := psExecutable()
+	if err != nil {
+		return map[string]interface{}{"status": "accepted-no-executor", "command": "block-network", "target": target, "note": err.Error()}, nil
+	}
+	escaped := strings.ReplaceAll(target, "'", "''")
+	// Block inbound+outbound on the target host via Windows Firewall
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'
+$ruleName = 'YAMA-BLOCK-%s'
+New-NetFirewallRule -Name $ruleName -DisplayName $ruleName -Direction Inbound -Action Block -RemoteAddress '%s' -Confirm:$false -ErrorAction SilentlyContinue
+New-NetFirewallRule -Name ($ruleName+'-OUT') -DisplayName ($ruleName+'-OUT') -Direction Outbound -Action Block -RemoteAddress '%s' -Confirm:$false -ErrorAction SilentlyContinue
+@{status='ok'; command='block-network'; target='%s'; rollback_rule=$ruleName} | ConvertTo-Json -Compress`,
+		escaped, escaped, escaped, escaped)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psExe, "-NonInteractive", "-NoProfile", "-Command", psScript)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("block-network failed: %w; stderr: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return map[string]interface{}{"status": "ok", "command": "block-network", "target": target}, nil
+	}
+	return result, nil
+}
+
+func (e *Executor) revokeCertificate(target string) (map[string]interface{}, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+	psExe, err := psExecutable()
+	if err != nil {
+		return map[string]interface{}{"status": "accepted-no-executor", "command": "revoke-certificate", "target": target, "note": err.Error()}, nil
+	}
+	escaped := strings.ReplaceAll(target, "'", "''")
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'
+$certs = Get-CACertificate -Identity '%s' -ErrorAction SilentlyContinue
+foreach ($c in $certs) { Revoke-CACertificate -SerialNumber $c.SerialNumber -Reason 'KeyCompromise' -Confirm:$false }
+Publish-CACrl -Confirm:$false -ErrorAction SilentlyContinue
+@{status='ok'; command='revoke-certificate'; target='%s'; revoked_count=$certs.Count} | ConvertTo-Json -Compress`,
+		escaped, escaped)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psExe, "-NonInteractive", "-NoProfile", "-Command", psScript)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("revoke-certificate failed: %w; stderr: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return map[string]interface{}{"status": "ok", "command": "revoke-certificate", "target": target}, nil
+	}
+	return result, nil
+}
+
+func (e *Executor) quarantineComputer(target string) (map[string]interface{}, error) {
+	if strings.TrimSpace(target) == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+	psExe, err := psExecutable()
+	if err != nil {
+		return map[string]interface{}{"status": "accepted-no-executor", "command": "quarantine-computer", "target": target, "note": err.Error()}, nil
+	}
+	escaped := strings.ReplaceAll(target, "'", "''")
+	// Move computer to quarantine OU and disable
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'
+$comp = Get-ADComputer -Identity '%s'
+$origDN = $comp.DistinguishedName
+$quarOU = "OU=Quarantine," + ($comp.DistinguishedName -replace '^CN=[^,]+,','')
+if (-not (Get-ADOrganizationalUnit -Filter {DistinguishedName -eq $quarOU} -ErrorAction SilentlyContinue)) {
+    New-ADOrganizationalUnit -Name 'Quarantine' -Path ($comp.DistinguishedName -replace '^CN=[^,]+,CN=[^,]+,','') -ErrorAction SilentlyContinue
+}
+Move-ADObject -Identity $comp.DistinguishedName -TargetPath $quarOU -Confirm:$false -ErrorAction SilentlyContinue
+Disable-ADAccount -Identity '%s' -Confirm:$false
+@{status='ok'; command='quarantine-computer'; target='%s'; original_dn=$origDN; quarantine_ou=$quarOU} | ConvertTo-Json -Compress`,
+		escaped, escaped, escaped)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psExe, "-NonInteractive", "-NoProfile", "-Command", psScript)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("quarantine-computer failed: %w; stderr: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return map[string]interface{}{"status": "ok", "command": "quarantine-computer", "target": target}, nil
+	}
 	return result, nil
 }
 

@@ -4,10 +4,14 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -137,15 +141,51 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
 }
 
+// generateJWT produces a signed HS256 JWT (RFC 7519) using stdlib crypto only.
 func generateJWT(username, secret string) (string, error) {
-	// Simple JWT generation - use golang-jwt in real impl
-	payload := map[string]interface{}{
-		"sub": username,
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-		"iat": time.Now().Unix(),
+	headerJSON, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	payloadJSON, _ := json.Marshal(map[string]interface{}{
+		"sub":      username,
+		"username": username,
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
+		"iat":      time.Now().Unix(),
+	})
+	header := base64.RawURLEncoding.EncodeToString(headerJSON)
+	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	sigInput := header + "." + payload
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(sigInput))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return sigInput + "." + sig, nil
+}
+
+// ParseJWTClaims validates an HS256 JWT and returns the payload claims.
+func ParseJWTClaims(token, secret string) (map[string]interface{}, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed token")
 	}
-	data, _ := json.Marshal(payload)
-	return fmt.Sprintf("Bearer.%s", string(data)), nil // Replace with real JWT signing
+	sigInput := parts[0] + "." + parts[1]
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(sigInput))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(parts[2])) {
+		return nil, fmt.Errorf("invalid signature")
+	}
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode payload: %w", err)
+	}
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
+		return nil, fmt.Errorf("parse payload: %w", err)
+	}
+	if exp, ok := claims["exp"].(float64); ok {
+		if time.Now().Unix() > int64(exp) {
+			return nil, fmt.Errorf("token expired")
+		}
+	}
+	return claims, nil
 }
 
 // ScanHandler proxies to scan-orchestrator

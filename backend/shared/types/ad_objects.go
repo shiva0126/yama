@@ -431,11 +431,20 @@ type ADCertificateTemplate struct {
 	WriteableBy             []string `json:"writeable_by"`    // principals with write access
 	LowPrivEnrollment       bool     `json:"low_priv_enrollment"` // Authenticated Users / Domain Computers can enroll
 
-	// ESC classification
+	// ESC classification (ESC1-ESC4 static checks)
 	VulnerableESC1          bool     `json:"vulnerable_esc1"`  // Enrollee supplies SAN + client auth + low-priv enroll
 	VulnerableESC2          bool     `json:"vulnerable_esc2"`  // Any Purpose or SubCA
 	VulnerableESC3          bool     `json:"vulnerable_esc3"`  // Certificate Request Agent
 	VulnerableESC4          bool     `json:"vulnerable_esc4"`  // Low-priv write access to template
+	// ESC9: CT_FLAG_NO_SECURITY_EXTENSION — security extension omitted, SAN bypass possible
+	VulnerableESC9          bool     `json:"vulnerable_esc9"`
+	// ESC10: Weak certificate mapping — StrongCertificateBindingEnforcement=0 or CertificateMappingMethods allows SAN
+	VulnerableESC10         bool     `json:"vulnerable_esc10"`
+	// ESC13: OID group link — issuance policy OID linked to a group that grants rights
+	VulnerableESC13         bool     `json:"vulnerable_esc13"`
+	OIDGroupLink            string   `json:"oid_group_link,omitempty"`
+	// ESC15: Schema V1 template — application policies override EKU in V1 schemas
+	VulnerableESC15         bool     `json:"vulnerable_esc15"`
 }
 
 type ADCertificateAuthority struct {
@@ -456,6 +465,10 @@ type ADCertificateAuthority struct {
 
 	// Web enrollment endpoint (for ESC8)
 	WebEnrollmentEnabled    bool     `json:"web_enrollment_enabled"`
+	// ESC11: IF_ENFORCEENCRYPTICERTREQUEST = 0 — request encryption not enforced, relay attack possible
+	RequestEncryptionDisabled bool   `json:"request_encryption_disabled"`
+	// ESC12: Shell access via CA — CA runs as SYSTEM and ShellAccessEnabled
+	ShellAccessEnabled      bool     `json:"shell_access_enabled"`
 }
 
 // ============================================================

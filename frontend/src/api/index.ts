@@ -233,6 +233,13 @@ export const defenseApi = {
   heartbeat:  (agentId: string, defenseUrl: string) =>
     defenseApiClient.post('/agent/heartbeat', { agent_id: agentId, defense_url: defenseUrl }),
   plan:       (incident: DefenseIncident) => defenseApiClient.post('/plan', incident),
+  // Incident lifecycle
+  approve:    (incidentId: string) => defenseApiClient.post(`/incidents/${incidentId}/approve`),
+  rollback:   (incidentId: string, reason: string) => defenseApiClient.post(`/incidents/${incidentId}/rollback`, { reason }),
+  close:      (incidentId: string) => defenseApiClient.post(`/incidents/${incidentId}/close`),
+  // Individual action approval/rollback
+  approveAction: (actionId: string) => defenseApiClient.post(`/responses/${actionId}/approve`),
+  rollbackAction: (actionId: string, reason: string) => defenseApiClient.post(`/responses/${actionId}/rollback`, { reason }),
 }
 
 // ============================================================

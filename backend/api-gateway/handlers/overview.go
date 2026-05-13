@@ -299,7 +299,7 @@ func topFindings(findings []types.Finding, limit int) []types.Finding {
 			}
 			return list[i].RiskScore > list[j].RiskScore
 		}
-		return severityRank(list[i].Severity) > severityRank(list[j].Severity)
+		return severityRank(string(list[i].Severity)) > severityRank(string(list[j].Severity))
 	})
 	if len(list) > limit {
 		return list[:limit]
